@@ -1,6 +1,6 @@
 # AI Image Studio
 
-**Version:** 3.3.0 | **Status:** Active | **Language:** Python
+**Version:** 3.3.1 | **Status:** Active | **Language:** Python
 
 A four-tab PyQt6 desktop application for AI image generation via ComfyUI (local or a RunPod pod the app starts and stops itself). Built mainly for multi-reference images: Scene Composer feeds up to four reference images to Flux.2 Dev for character-consistent scenes.
 
@@ -90,6 +90,10 @@ P:\AI\VideCoding\.venv\Scripts\python.exe -m PyInstaller --noconfirm "AI Image S
 Deploy: copy `dist\AI Image Studio.exe` and `Comfy_Workflows\` to `P:\Apps\VibeCoded\AI Image Studio\`. Never overwrite the `settings.json`, `api_keys.json` or `generation_history.json` already there. EXE is ~130 MB.
 
 ## Changelog
+
+### v3.3.1 — 2026-10-08
+- The window, dialogs and taskbar now use the app icon (previously only the EXE file had it): app-wide `setWindowIcon`, own `AppUserModelID` so Windows stops grouping it under python.exe. The icon is bundled into the EXE and loaded from PyInstaller's unpack folder, so a stale `app_icon.ico` left beside the EXE can no longer show.
+- `AI Image Studio.spec` is gitignored (`*.spec`); it needs `datas=qt_datas + [('app_icon.ico', '.')]` and `icon=['app_icon.ico']`.
 
 ### v3.3.0 — 2026-10-03
 - **RunPod pod control** ported from the ComfyUI Video Creator (via the Style Randomizer copy): header Start/Stop Pod + spend readout, launch chooser, GPU priority / pod order, keep-trying, spend limit, idle stop, quit prompt, alert sound. New modules `runpod_api.py`, `alerts.py`, `ui/pod_control.py`, `ui/pod_worker.py`

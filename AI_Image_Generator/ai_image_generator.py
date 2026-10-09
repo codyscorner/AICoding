@@ -30,7 +30,7 @@ from ui.styles import (
     COLORS, POD_QSS,
 )
 
-VERSION = "3.3.0"
+VERSION = "3.3.1"
 
 # Next to the EXE, not Path(__file__): in a one-file build that is the temp
 # extraction folder, so settings, history and workflows vanished on exit.
@@ -2979,9 +2979,22 @@ if __name__ == "__main__":
     import traceback
     log_file = APP_DIR / "error_log.txt"
     try:
+        # Own taskbar identity so Windows doesn't group us under python.exe.
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AIImageStudio.App.1")
+        except Exception:
+            pass
         app = QApplication(sys.argv)
         app.setApplicationName("AI Image Studio")
+        # The icon is bundled read-only data (PyInstaller's unpack folder when
+        # frozen); APP_DIR is the EXE folder and may hold a stale copy.
+        from PyQt6.QtGui import QIcon
+        _icon_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "app_icon.ico"
+        _icon = QIcon(str(_icon_path)) if _icon_path.exists() else QIcon()
+        app.setWindowIcon(_icon)
         window = MainWindow()
+        window.setWindowIcon(_icon)
         window.show()
         sys.exit(app.exec())
     except Exception as e:
