@@ -403,6 +403,18 @@ APPS = [
             "square icon, sharp edges, modern Windows app icon design, 512x512"
         ),
     },
+    {
+        "name": "S3Browser",
+        "project_folder": "S3_Broswer",
+        "prompt": (
+            "Minimalist flat app icon, dark slate navy background #0d1626, "
+            "a glowing cyan cloud with a folder and file document hanging below it "
+            "connected by thin lines, and a small upload/download arrow pair, "
+            "representing browsing cloud object storage, "
+            "clean vector style, no text, square icon, sharp edges, "
+            "modern Windows app icon design, 512x512"
+        ),
+    },
 ]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -523,7 +535,7 @@ def find_projects_missing_icon(projects_root: Path = PROJECTS_ROOT) -> list[str]
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 NEW_APPS = {
-    "TodoList",
+    "S3Browser",
 }
 
 
