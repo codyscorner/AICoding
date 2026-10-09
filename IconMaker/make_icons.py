@@ -428,6 +428,18 @@ APPS = [
         ),
     },
     {
+        "name": "FileCopyMoveManager",
+        "project_folder": "File Copy Move Manager",
+        "prompt": (
+            "Minimalist flat app icon, dark charcoal background #16100f, "
+            "two stacked glowing document pages in soft coral rose #ff6b8b, the back "
+            "page a faded duplicate copy, with a bold forward arrow carrying the "
+            "front page to the right, representing copying and moving files, "
+            "clean vector style, no text, no folder, square icon, sharp edges, "
+            "modern Windows app icon design, 512x512"
+        ),
+    },
+    {
         "name": "IconMaker",
         "project_folder": "IconMaker",
         "prompt": (
@@ -558,8 +570,7 @@ def find_projects_missing_icon(projects_root: Path = PROJECTS_ROOT) -> list[str]
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 NEW_APPS = {
-    "FolderSync",
-    "IconMaker",
+    "FileCopyMoveManager",
 }
 
 

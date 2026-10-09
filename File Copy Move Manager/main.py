@@ -9,7 +9,14 @@ from PyQt6.QtGui import QIcon
 from config import ConfigManager
 from ui.main_window import MainWindow
 
-VERSION = "3.4.1"
+VERSION = "3.4.2"
+
+# Own taskbar identity so Windows doesn't group us under python.exe.
+try:
+    import ctypes
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("FileCopyMoveManager.App.1")
+except Exception:
+    pass
 
 
 def get_config_file() -> Path:
@@ -23,9 +30,13 @@ def main():
     app = QApplication(sys.argv)
     config_manager = ConfigManager(get_config_file())
     window = MainWindow(config_manager, VERSION)
+    # Bundled data lives in PyInstaller's unpack folder when frozen (__file__
+    # resolves there too). App-level icon also covers every dialog + taskbar.
     icon_path = Path(__file__).parent / "app_icon.ico"
     if icon_path.exists():
-        window.setWindowIcon(QIcon(str(icon_path)))
+        icon = QIcon(str(icon_path))
+        app.setWindowIcon(icon)
+        window.setWindowIcon(icon)
     window.show()
     sys.exit(app.exec())
 
