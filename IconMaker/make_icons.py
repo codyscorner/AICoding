@@ -415,6 +415,29 @@ APPS = [
             "modern Windows app icon design, 512x512"
         ),
     },
+    {
+        "name": "FolderSync",
+        "project_folder": "FolderSync",
+        "prompt": (
+            "Minimalist flat app icon, deep dark plum background #1a0a1c, "
+            "two glowing hot magenta circular arrows chasing each other in a "
+            "continuous sync loop, with a small folder tab on the left and right "
+            "of the loop, neon pink #ff2d95 glow, representing two-way folder "
+            "synchronization, clean vector style, no text, square icon, "
+            "sharp edges, modern Windows app icon design, 512x512"
+        ),
+    },
+    {
+        "name": "IconMaker",
+        "project_folder": "IconMaker",
+        "prompt": (
+            "Minimalist flat app icon, dark charcoal background #0f140a, "
+            "a glowing electric lime green #b6ff00 blacksmith anvil with a small "
+            "rounded-square app icon tile being forged on top and bright sparks "
+            "flying, representing an icon generator, clean vector style, no text, "
+            "square icon, sharp edges, modern Windows app icon design, 512x512"
+        ),
+    },
 ]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -535,7 +558,8 @@ def find_projects_missing_icon(projects_root: Path = PROJECTS_ROOT) -> list[str]
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 NEW_APPS = {
-    "S3Browser",
+    "FolderSync",
+    "IconMaker",
 }
 
 

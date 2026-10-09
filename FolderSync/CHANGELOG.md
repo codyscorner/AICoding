@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.1] — 2026-10-08
+
+### Fixed
+- The built EXE showed PyInstaller's default floppy-disk icon: the code looked for `app_icon.ico` next to the EXE, but the file was never generated, bundled or embedded.
+
+### Added
+- New app icon (`app_icon.ico`, magenta two-way sync loop between folders; made with IconMaker).
+- Icon is embedded in the EXE (`FolderSync.spec` `icon=`) for Explorer/shortcuts, bundled as data for the window, and the app sets its own `AppUserModelID` so the taskbar shows it instead of python.exe.
+- `FolderSync.spec` is gitignored (`*.spec`); the lines needed are `datas` `('app_icon.ico', '.')` and `icon=[...app_icon.ico]` in `EXE(...)`.
+
 ## [1.1.0] — 2026-07-08
 
 ### Added
