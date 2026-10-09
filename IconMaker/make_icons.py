@@ -396,9 +396,9 @@ APPS = [
         "name": "TodoList",
         "project_folder": "TodoList",
         "prompt": (
-            "Minimalist flat app icon, dark navy background #1a1a2e, "
-            "a glowing violet checklist clipboard with two checked boxes in "
-            "bright green and one empty box, purple #7b2fff and lavender accents, "
+            "Minimalist flat app icon, deep navy blue background #0a1428, "
+            "a glowing royal blue #2f6fed checklist clipboard with two checked boxes in "
+            "bright green and one empty box, light sky-blue #7fb3ff accents, "
             "representing a simple to-do list, clean vector style, no text, "
             "square icon, sharp edges, modern Windows app icon design, 512x512"
         ),

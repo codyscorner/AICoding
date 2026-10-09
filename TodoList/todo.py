@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QIcon, QShortcut, QKeySequence
 from PyQt6.QtCore import Qt
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 # Own taskbar identity: without this Windows groups the window under
 # python.exe and shows its icon instead of ours.

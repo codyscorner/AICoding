@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.1
+- New navy-blue app icon (royal-blue clipboard with a green tick) to match the navy theme; the old one was violet. Regenerated with IconMaker, still unique among the project icons.
+
 ## v1.1.0
 - **Navy blue theme** replaces the purple one. This palette is now the default for new apps (see `COLORS` in `todo.py`).
 - **Text fixed:** task text no longer sits in dark boxes (a blanket `QWidget` background rule was painting every label), uses Segoe UI, and now takes all the spare width so it wraps/expands as the window is resized.

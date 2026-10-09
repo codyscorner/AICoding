@@ -44,6 +44,7 @@ Produces `TodoList.exe`, deploys it to `P:\Apps\VibeCoded\TodoList\`, and update
 
 ## Recent Changes
 
+- **v1.1.1** — Navy-blue app icon to match the theme.
 - **v1.1.0** — Navy blue theme (the default palette for new apps), text no longer in dark boxes and expands with the window, frameless checkbox, optional closing comment on completion, History view (nothing is ever deleted by accident), scrolling list, atomic saves. See [CHANGELOG.md](CHANGELOG.md).
 - **v1.0.1** — App icon on the taskbar, title bar, dialogs, EXE and desktop shortcut.
 - **v1.0.0** — Initial release.
