@@ -66,8 +66,8 @@ class VideoPlayerDialog(QDialog):
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowCloseButtonHint)
         self.setStyleSheet(f"""
             QDialog, QWidget {{ background-color: #000000; color: {COLORS['fg_primary']}; font-family: "Segoe UI"; }}
-            QPushButton {{ background-color: {COLORS['accent']}; color: white; font-weight: bold; border: none;
-                           border-radius: 4px; padding: 6px 16px; font-size: 10pt; }}
+            QPushButton {{ background-color: {COLORS['accent']}; color: white; font-weight: normal; border: none;
+                           border-radius: 4px; padding: 5px 10px; font-size: 10pt; }}
             QPushButton:hover {{ background-color: {COLORS['accent_hover']}; }}
             QPushButton:disabled {{ background-color: {COLORS['bg_light']}; color: {COLORS['fg_dim']}; }}
             QSlider::groove:horizontal {{ background: {COLORS['bg_light']}; height: 4px; border-radius: 2px; }}
