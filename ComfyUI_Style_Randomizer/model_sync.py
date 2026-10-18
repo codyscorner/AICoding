@@ -501,7 +501,9 @@ class TransferWorker(QThread):
     models folder. Each file is retried with backoff and its size verified.
     Cancel aborts the file in flight (not just "after this file")."""
     log = pyqtSignal(str)
-    progress = pyqtSignal(int, int, str, int, int)   # bytes_done, bytes_total, label, files_done, files_total
+    # bytes_done / bytes_total are `object`, NOT `int`: a pyqtSignal(int) is a C++ 32-bit int and silently wraps
+    # anything over 2.1 GB (an 18 GB file showed as "855 MB" and the bytes sent went negative).
+    progress = pyqtSignal(object, object, str, int, int)   # bytes_done, bytes_total, label, files_done, files_total
     finished_ok = pyqtSignal(list)                    # [(label, error)] — empty = all good
 
     def __init__(self, config: dict, jobs: list[TransferJob]):

@@ -141,6 +141,9 @@ Every successful generation appends a row to `prompt_log.csv` in the output fold
 
 ## Changelog
 
+### v1.9.6
+- **Fix: the model upload/download progress was wrong for any file over 2 GB.** The progress signal carried the byte counts through a 32-bit integer, so an 18.03 GB upload showed "-1911 MB of 855 MB" and a bar stuck near 99%. The counts now arrive intact: real "9.02 GB of 18.03 GB", a bar that matches, and a sensible MB/s and time left. The transfer itself was never affected - only the dialog
+
 ### v1.9.5
 - **Scenario history** - every Generate click records the Scenario + Idea pair in `scene_history.json` next to the config/EXE (newest first, repeats move to the top with a use count, 300 kept). **📜 History** in Edit Prompts opens a browser with a word filter and full-text preview; *Use this* (or double-click) loads both boxes back; *Delete* removes an entry
 - **Remembered on reopen**: the Idea (previously lost every time) and Count, the Prompt editor's window size, the Order dropdown, the Auto Run batch size and the main window's size/position
