@@ -105,6 +105,7 @@ STYLESHEET = f"""
         color: {FG_DIM};
         border: 1px solid {BORDER};
         padding: 6px 12px;
+        font-weight: normal;
     }}
     QPushButton#browse_btn:hover {{ background-color: {BG_MED}; color: {FG}; }}
     QListWidget {{
