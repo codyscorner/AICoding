@@ -1,5 +1,8 @@
 # Changelog — ComfyUI Workflow Chain Automator
 
+### Unreleased
+- **Icon-only buttons now have a short text label.** Buttons that showed only a symbol (↻, …, 🎲, 🗑 and so on) now read e.g. "↻ Refresh" or "Browse" in regular-weight, regular-size text; their fixed widths were dropped so they size to their label. Covers: ↻ Refresh, 🎲 Random, ⚙ Settings, Browse, and the video player's ⏸ Pause / ▶ Play, ■ Stop, ⛶ Full screen, ⏮ Prev, ⏭ Next.
+
 ### v3.12.2
 - Fix: two starting images with the same name but different extensions (`x_000001.jpg` and `x_000001.png`) produced the same final video name and the same zip name, so the second video silently overwrote the first — a 2-image batch ended with one video in the library. Final names are now unique within a batch: the first keeps `<stem>_<stamp>.mp4`, a later duplicate becomes `<stem>_<ext>_<stamp>.mp4` (then `_2`, `_3`, ...), and the zip follows the video name
 
