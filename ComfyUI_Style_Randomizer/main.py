@@ -9,7 +9,7 @@ from ui.main_window import MainWindow
 from ui.styles import STYLESHEET
 
 BASE_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
-VERSION = "1.9.6"
+VERSION = "1.9.7"
 
 
 def main():

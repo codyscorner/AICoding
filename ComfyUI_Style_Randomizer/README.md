@@ -141,6 +141,10 @@ Every successful generation appends a row to `prompt_log.csv` in the output fold
 
 ## Changelog
 
+### v1.9.7
+- **Fix: blank buttons in Settings.** The Browse buttons beside Output Folder, Workflow JSON, Prompts File, the Models folder and the alert sound, and the Prompts File *Edit* button, showed an empty purple square. The default button style pads 28 px on each side but these were forced to 36-52 px wide, leaving no room for any text. They are now labelled **Browse** / **Edit** with a minimum width, so they always fit
+- Bare-symbol buttons now say what they do: **▲ Up / ▼ Down / ↻ Refresh** (GPU and pod order lists), **⤢ Expand** (Scenario and Idea boxes) and **⟳ Refresh** (model list)
+
 ### v1.9.6
 - **Fix: the model upload/download progress was wrong for any file over 2 GB.** The progress signal carried the byte counts through a 32-bit integer, so an 18.03 GB upload showed "-1911 MB of 855 MB" and a bar stuck near 99%. The counts now arrive intact: real "9.02 GB of 18.03 GB", a bar that matches, and a sensible MB/s and time left. The transfer itself was never affected - only the dialog
 

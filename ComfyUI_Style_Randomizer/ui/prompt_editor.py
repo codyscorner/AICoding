@@ -62,9 +62,10 @@ class PromptEditorDialog(QDialog):
         return edit
 
     def _make_expand_btn(self, edit: QPlainTextEdit, title: str) -> QPushButton:
-        btn = QPushButton("⤢")
+        btn = QPushButton("⤢ Expand")
         btn.setObjectName("small_btn")
-        btn.setFixedSize(32, 28)
+        btn.setMinimumWidth(84)
+        btn.setFixedHeight(28)
         btn.setToolTip(f"Open a larger editor for the {title}")
         btn.clicked.connect(lambda: self._expand_text(edit, title))
         return btn
@@ -156,9 +157,10 @@ class PromptEditorDialog(QDialog):
         self._model_combo.setEditable(True)
         self._model_combo.setMinimumWidth(220)
 
-        self._refresh_models_btn = QPushButton("⟳")
+        self._refresh_models_btn = QPushButton("⟳ Refresh")
         self._refresh_models_btn.setObjectName("small_btn")
-        self._refresh_models_btn.setFixedSize(30, 26)
+        self._refresh_models_btn.setMinimumWidth(84)
+        self._refresh_models_btn.setFixedHeight(26)
         self._refresh_models_btn.setToolTip("Fetch the live model list from this provider's API")
         self._refresh_models_btn.clicked.connect(self._on_refresh_models)
 
