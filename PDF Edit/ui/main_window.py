@@ -190,6 +190,8 @@ class MainWindow(QMainWindow):
 
         # color swatch
         self.color_btn = QToolButton()
+        self.color_btn.setText("Color")
+        self.color_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.color_btn.setToolTip("Annotation color")
         self.color_btn.clicked.connect(self.pick_color)
         self._set_color_swatch(self.view.color)
