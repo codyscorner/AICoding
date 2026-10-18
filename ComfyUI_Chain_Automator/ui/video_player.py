@@ -75,10 +75,10 @@ class VideoPlayerDialog(QDialog):
             QPushButton {{
                 background-color: {COLORS['accent']};
                 color: white;
-                font-weight: bold;
+                font-weight: normal;
                 border: none;
                 border-radius: 4px;
-                padding: 6px 16px;
+                padding: 5px 10px;
                 font-size: 10pt;
             }}
             QPushButton:hover {{ background-color: {COLORS['accent_hover']}; }}
