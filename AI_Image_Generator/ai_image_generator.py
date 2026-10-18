@@ -30,7 +30,7 @@ from ui.styles import (
     COLORS, POD_QSS,
 )
 
-VERSION = "3.3.1"
+VERSION = "3.3.2"
 
 # Next to the EXE, not Path(__file__): in a one-file build that is the temp
 # extraction folder, so settings, history and workflows vanished on exit.

@@ -1,6 +1,6 @@
 # AI Image Studio
 
-**Version:** 3.3.1 | **Status:** Active | **Language:** Python
+**Version:** 3.3.2 | **Status:** Active | **Language:** Python
 
 A four-tab PyQt6 desktop application for AI image generation via ComfyUI (local or a RunPod pod the app starts and stops itself). Built mainly for multi-reference images: Scene Composer feeds up to four reference images to Flux.2 Dev for character-consistent scenes.
 
@@ -90,6 +90,9 @@ P:\AI\VideCoding\.venv\Scripts\python.exe -m PyInstaller --noconfirm "AI Image S
 Deploy: copy `dist\AI Image Studio.exe` and `Comfy_Workflows\` to `P:\Apps\VibeCoded\AI Image Studio\`. Never overwrite the `settings.json`, `api_keys.json` or `generation_history.json` already there. EXE is ~130 MB.
 
 ## Changelog
+
+### v3.3.2 — 2026-10-18
+- **Fix: the model upload/download progress was wrong for any file over 2 GB.** The progress signal carried the byte counts through a 32-bit integer, so an 18.03 GB upload showed "-1911 MB of 855 MB" and a bar stuck near 99%. The counts now arrive intact: real sizes ("9.02 GB of 18.03 GB"), a bar that matches, and a sensible MB/s and time left. The transfer itself was never affected - only the dialog
 
 ### v3.3.1 — 2026-10-08
 - The window, dialogs and taskbar now use the app icon (previously only the EXE file had it): app-wide `setWindowIcon`, own `AppUserModelID` so Windows stops grouping it under python.exe. The icon is bundled into the EXE and loaded from PyInstaller's unpack folder, so a stale `app_icon.ico` left beside the EXE can no longer show.
