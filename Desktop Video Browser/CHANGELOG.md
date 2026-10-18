@@ -1,5 +1,8 @@
 # Changelog — Desktop Video Browser
 
+## Unreleased
+- **Icon-only buttons now have a short text label.** Buttons that showed only a symbol (↻, …, 🎲, 🗑 and so on) now read e.g. "↻ Refresh" or "Browse" in regular-weight, regular-size text; their fixed widths were dropped so they size to their label. Covers: the player's ▶ Play / ⏸ Pause, ■ Stop and ⛶ Full screen.
+
 ## [1.3.3] — 2026-10-17
 
 ### Added
