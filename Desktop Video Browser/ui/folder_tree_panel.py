@@ -1,4 +1,8 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QTreeView, QFileSystemModel
+import os
+import subprocess
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QTreeView, QFileSystemModel, QMenu, QApplication,
+)
 from PySide6.QtCore import Signal, QDir, Qt
 
 _NAV_KEYS = {
@@ -49,6 +53,8 @@ class FolderTreePanel(QWidget):
             self.tree.hideColumn(column)
         self.tree.setAnimated(True)
         self.tree.clicked.connect(self._emit_for_index)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self.tree)
 
     def _emit_for_index(self, index) -> None:
@@ -57,6 +63,34 @@ class FolderTreePanel(QWidget):
         path = self.model.filePath(index)
         if path:
             self.folderSelected.emit(path)
+
+    def _show_context_menu(self, pos) -> None:
+        # Act on the folder under the cursor, not the highlighted one, so a
+        # right-click never needs a left-click first (and never reloads the list).
+        index = self.tree.indexAt(pos)
+        if not index.isValid():
+            return
+        path = os.path.normpath(self.model.filePath(index))
+        menu = QMenu(self)
+        open_action = menu.addAction("Open in Explorer")
+        copy_action = menu.addAction("Copy Folder Path")
+        chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
+        if chosen == open_action:
+            self._open_in_explorer(path)
+        elif chosen == copy_action:
+            QApplication.clipboard().setText(path)
+
+    @staticmethod
+    def _open_in_explorer(path: str) -> None:
+        if os.path.isdir(path):
+            subprocess.Popen(["explorer", path])
+
+    def highlighted_folder(self) -> str:
+        """Path of the folder currently highlighted in the tree ('' if none)."""
+        index = self.tree.currentIndex()
+        if not index.isValid():
+            return ""
+        return self.model.filePath(index)
 
     def set_current_folder(self, path: str) -> None:
         if not path:
