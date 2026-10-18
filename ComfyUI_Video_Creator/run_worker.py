@@ -18,6 +18,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from comfy_client import ComfyClient
 from media_tools import concat_videos, extract_last_frame, probe, resolve_ffmpeg
 from remote_cleanup import OutputCleaner, enabled as cleanup_enabled
+from workflow_folders import library_dir_for, workflow_rel_of
 from workflow_tools import (
     ValueField, analyze, apply_inputs, apply_megapixels, apply_output_format, apply_seed,
     apply_steps, apply_turbo_toggle, apply_value, list_workflows, load_workflow, match_format_value, output_formats,
@@ -411,6 +412,9 @@ class RunWorker(QThread):
             )
         out_dir = req.output_dir_override or Path(
             (self._cfg.get("output_dir", "") or "").strip() or (self._base_dir / "output"))
+        if req.output_dir_override is None and self._cfg.get("output_per_workflow", True):
+            # Each workflow keeps its videos in its own Library folder
+            out_dir = library_dir_for(out_dir, workflow_rel_of(req.workflow_path, self._cfg.get("workflow_dir", "")))
         out_dir.mkdir(parents=True, exist_ok=True)
         stem = self._output_stem(req)
         label = _safe(req.workflow_label)

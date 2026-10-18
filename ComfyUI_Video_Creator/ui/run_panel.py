@@ -117,6 +117,7 @@ class RunPanel(QWidget):
     show_queue_requested = pyqtSignal()
     play_requested = pyqtSignal(str)
     workflows_changed = pyqtSignal()        # a workflow file was added — other tabs rescan
+    workflow_selected = pyqtSignal(str)     # the selected workflow changed (path relative to the Workflows folder)
     loras_changed = pyqtSignal(str, str)    # the shared LoRA list was reloaded (folder info, server info)
 
     def __init__(self, kind: str, config: ConfigManager, parent=None):
@@ -640,6 +641,12 @@ class RunPanel(QWidget):
         self._cfg.set(self._config_key(), rel)
         self._workflow_path = Path(self._cfg.get("workflow_dir", "")) / rel
         self._load_analysis()
+        self.workflow_selected.emit(rel)
+
+    @property
+    def workflow_rel(self) -> str:
+        """The selected workflow, relative to the Workflows folder ("" before one is chosen)."""
+        return self._workflow_rel or ""
 
     def _reload_workflow(self):
         if self._workflow_path is not None:
