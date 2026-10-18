@@ -170,8 +170,7 @@ class SearchByImageDialog(QDialog):
         self.folder_input.setReadOnly(True)
         folder_input_layout.addWidget(self.folder_input)
 
-        self.browse_folder_btn = QPushButton("...")
-        self.browse_folder_btn.setFixedWidth(40)
+        self.browse_folder_btn = QPushButton("Browse")
         self.browse_folder_btn.clicked.connect(self._browse_folder)
         folder_input_layout.addWidget(self.browse_folder_btn)
 
