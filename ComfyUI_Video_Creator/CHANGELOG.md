@@ -1,5 +1,8 @@
 # Changelog — ComfyUI Video Creator
 
+### Unreleased
+- **Icon-only buttons now have a short text label.** Buttons that showed only a symbol (↻, …, 🎲, 🗑 and so on) now read e.g. "↻ Refresh" or "Browse" in regular-weight, regular-size text; their fixed widths were dropped so they size to their label. Covers: ↻ Refresh, 🎲 Random, Browse, 📂 Open, 🗑 Delete, and the video player's ⏸ Pause / ▶ Play, ■ Stop, ⛶ Full screen, ⏮ Prev, ⏭ Next.
+
 ### v2.17.1
 - **Fix: the model upload/download progress was wrong for any file over 2 GB.** The progress signal carried the byte counts through a 32-bit integer, so an 18.03 GB upload showed "-1911 MB of 855 MB" and a bar stuck near 99%. The counts now arrive intact: real sizes ("9.02 GB of 18.03 GB"), a bar that matches, and a sensible MB/s and time left. The transfer itself was never affected - only the dialog
 
