@@ -105,7 +105,7 @@ QPushButton {{
 }}
 QPushButton:hover {{ background-color: {ACCENT_HOV}; }}
 QPushButton:disabled {{ background-color: {BG_LIGHT}; color: {FG_DIM}; }}
-QPushButton#browse_btn {{ padding: 6px 12px; font-size: 10pt; }}
+QPushButton#browse_btn, QPushButton#out_browse {{ padding: 6px 12px; font-size: 10pt; font-weight: normal; }}
 QPushButton#cancel_btn {{
     background-color: {ACCENT_DARK};
     color: {FG_PRIMARY};
