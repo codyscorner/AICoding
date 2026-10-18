@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import QApplication
 from config import CONFIG_NAME, ConfigManager, app_dir
 from ui.main_window import MainWindow
 
-VERSION = "2.17.0"
+VERSION = "2.17.1"
 
 # Windows taskbar icon fix — must run before QApplication is created
 try:

@@ -1,5 +1,8 @@
 # Changelog — ComfyUI Video Creator
 
+### v2.17.1
+- **Fix: the model upload/download progress was wrong for any file over 2 GB.** The progress signal carried the byte counts through a 32-bit integer, so an 18.03 GB upload showed "-1911 MB of 855 MB" and a bar stuck near 99%. The counts now arrive intact: real sizes ("9.02 GB of 18.03 GB"), a bar that matches, and a sensible MB/s and time left. The transfer itself was never affected - only the dialog
+
 ### v2.17.0
 - **Video → Extend: keep track of one set of extensions at a time.** An extension with *Append* ticked saves two files — the short new clip (`…_EXT_<stamp>.mp4`) and the complete video (`…_extended_<stamp>.mp4`) — and both sat in the picker next to every source already extended. A new row under Sort / Show all:
   - **📚 Send to Library** — moves the selected video(s) (the complete ones you want to keep) into the Library folder, inside the active workflow's own folder (`<Library>/<workflow path>/`), after a confirm box listing them and the target. A file already under the Library folder is left alone. Name clashes get `_2`, `_3`; cached thumbnails are dropped and re-made in the new folder; a player showing one of them is closed first. The Library tab and the Extend list refresh, and because the video is now in that workflow's Library folder it counts as the workflow's result (so its source is hidden from the picker by the existing finished-source filter). Also in the right-click menu
