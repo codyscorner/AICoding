@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- **Icon-only buttons now have a short text label.** Buttons that showed only a symbol (↻, …, 🎲, 🗑 and so on) now read e.g. "↻ Refresh" or "Browse" in regular-weight, regular-size text; their fixed widths were dropped so they size to their label. Covers: the source and output folder Browse buttons.
+
 ## v1.1.0 — 2026-07-08
 
 - Drag-and-drop: drop a folder or file onto the window to set the source folder.
