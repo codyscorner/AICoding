@@ -1,5 +1,9 @@
 # Changelog — ComfyUI Workflow Chain Automator
 
+### v3.12.0
+- **Delete segment videos from the pod volume once they are downloaded** (new `remote_cleanup.py`, same module as ComfyUI Video Creator v2.15.0). ComfyUI never removes its finished videos from `<ComfyUI>/output` on the network volume, and the volume is billed per GB, so every batch left its segment clips behind. New checkbox in **Settings → RunPod Volume (S3)**: *Delete each segment video from the pod volume after it is downloaded* (**off by default**) plus *Output Prefix* (default `runpod-slim/ComfyUI/output/`)
+- Safety rules: deleted only if the object is on the volume, the local copy is not empty, and **the local size equals the volume's size**; otherwise the pod copy is kept and the log says why. Only real `output` files, `..` paths refused, and the empty `Merge/<run>` folder is removed after its last file (pruned bottom-up, only when a listing shows it empty). RunPod mode only; failures are logged (`Deleted … from the pod volume` / `Pod cleanup: kept …`) and never fail the batch. Both download paths (history outputs and the "already exists" fallback) are covered
+
 ### v3.11.4
 - Fix: in a multi-image batch the segments could swap between videos (video A's segment 2 attached to video B and vice versa). Outputs are paired back to images by position, but the Inspire `LoadImageListFromDir` node in the batch workflows was set to `sort_method: None`, which returns raw directory-listing order — arbitrary on the pod's Linux filesystem — so on a segment the pod listed `002_...` before `001_...` and every output after it was matched to the wrong image. The batch run now forces the loader to `Alphabetical (ASC)` (staged files are zero-padded `001_`, `002_`, ...), whatever the workflow JSON says. Not specific to MiniMax; WAN chains could hit it too
 

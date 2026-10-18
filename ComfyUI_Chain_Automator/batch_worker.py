@@ -14,6 +14,7 @@ import requests
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from metadata_parser import extract_segment_prompt, ffmetadata_escape, build_prompts_text
+from remote_cleanup import OutputCleaner, enabled as cleanup_enabled
 
 logger = logging.getLogger("batch_chain")
 logger.setLevel(logging.DEBUG)
@@ -506,6 +507,7 @@ class BatchChainWorker(QThread):
         resp.raise_for_status()
         history = resp.json().get(prompt_id, {})
         outputs = history.get("outputs", {})
+        cleaner = OutputCleaner(self._config, self._log) if self._runpod and cleanup_enabled(self._config) else None
 
         all_files = []
         # ComfyUI's native SaveVideo node (MiniMax H3 workflows) reports its
@@ -553,6 +555,9 @@ class BatchChainWorker(QThread):
                         for chunk in dl.iter_content(1024 * 1024):
                             f.write(chunk)
                     downloaded.append(local)
+                    if cleaner:
+                        cleaner.delete_if_downloaded(
+                            {"filename": filename, "subfolder": subfolder, "type": "output"}, local)
                 return downloaded
             raise RuntimeError(f"No output videos in history for batch segment {seg}")
 
@@ -584,6 +589,8 @@ class BatchChainWorker(QThread):
                 for chunk in dl.iter_content(1024 * 1024):
                     f.write(chunk)
             downloaded.append(local)
+            if cleaner:
+                cleaner.delete_if_downloaded(file_info, local)
 
         return downloaded
 

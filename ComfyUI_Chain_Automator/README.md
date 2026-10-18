@@ -1,6 +1,6 @@
 # ComfyUI Workflow Chain Automator
 
-Version: 3.11.4
+Version: 3.12.0
 
 Automates a chain of ComfyUI segments (up to 10), stitching the outputs into a single final video. Supports both local ComfyUI and RunPod deployments.
 
@@ -87,6 +87,7 @@ Edit `main_config.json` or use the ⚙ Settings button in the app.
 | `runpod_retry_interval_min` / `runpod_retry_window_min` | Keep Trying sweep interval and give-up window |
 | `runpod_auto_prompt` / `runpod_auto_stop_on_exit` | Ask to start a pod on launch; ask to stop the connected pod on quit |
 | `alert_sound_path` / `alert_sound_enabled` | The one alert sound (batch done, Auto Run done, pod found, gave up) |
+| `s3_delete_outputs_after_download` / `s3_output_prefix` | RunPod mode: delete each segment video from the pod volume (via S3) right after it is downloaded and its size matches (default off), and ComfyUI's output folder inside the bucket (default `runpod-slim/ComfyUI/output/`) |
 
 The RunPod **API key** is not in this file: put `{"runpod_api_key": "..."}` in `api_keys.json` next to the EXE (or set `RUNPOD_API_KEY`). The pod this app started is remembered in `runpod_session.json`, and the pod chain is logged to `runpod_pod.log`, both next to the EXE.
 
