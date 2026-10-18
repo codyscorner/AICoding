@@ -187,6 +187,7 @@ STYLESHEET = f"""
     }}
     QPushButton:hover {{ background-color: {ACCENT2}; }}
     QPushButton:disabled {{ background-color: {BG_LT}; color: {FG_DIM}; }}
+    QPushButton[compact="true"] {{ padding: 5px 10px; font-size: 9pt; font-weight: normal; }}
     QPushButton#secondary {{
         background-color: {BG_LT};
         color: {FG_DIM};
@@ -1053,7 +1054,21 @@ class ImageViewerDialog(QDialog):
 # Tab 1 — Text to Image
 # ------------------------------------------------------------------ #
 
-class TextToImageTab(QWidget):
+class _FitLeftPanelMixin:
+    """The left column of each generator tab is a scroll area with no horizontal scrollbar and
+    only a third of the window. Once the tab is shown (so styles are applied) raise that column's
+    minimum width to whatever its labelled buttons really need, so nothing is clipped."""
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        area = getattr(self, "_left_scroll", None)
+        if area is not None and area.widget() is not None:
+            need = area.widget().minimumSizeHint().width() + 8
+            if need > area.minimumWidth():
+                area.setMinimumWidth(need)
+
+
+class TextToImageTab(_FitLeftPanelMixin, QWidget):
     def __init__(self, settings: dict, host: "MainWindow", parent=None):
         super().__init__(parent)
         self._settings = settings
@@ -1079,6 +1094,7 @@ class TextToImageTab(QWidget):
         left.setContentsMargins(4, 4, 4, 4)
 
         left_scroll = QScrollArea()
+        self._left_scroll = left_scroll
         left_scroll.setWidget(left_widget)
         left_scroll.setWidgetResizable(True)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1092,6 +1108,7 @@ class TextToImageTab(QWidget):
         self._wf_combo = QComboBox()
         wf_reload = QPushButton("↻ Reload")
         wf_reload.setObjectName("secondary")
+        wf_reload.setProperty("compact", True)
         wf_reload.setFixedHeight(34)
         wf_reload.setToolTip("Reload workflows")
         wf_reload.clicked.connect(self._reload_workflows)
@@ -1150,6 +1167,7 @@ class TextToImageTab(QWidget):
         self._seed.setValue(-1)
         rand_btn = QPushButton("🎲 Random")
         rand_btn.setObjectName("secondary")
+        rand_btn.setProperty("compact", True)
         rand_btn.setFixedHeight(30)
         rand_btn.clicked.connect(lambda: self._seed.setValue(-1))
         seed_inner.addWidget(self._seed)
@@ -1166,6 +1184,7 @@ class TextToImageTab(QWidget):
         self._out_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         out_browse = QPushButton("Browse")
         out_browse.setObjectName("secondary")
+        out_browse.setProperty("compact", True)
         out_browse.setFixedHeight(36)
         out_browse.clicked.connect(self._browse_output)
         out_row.addWidget(self._out_edit)
@@ -1194,11 +1213,13 @@ class TextToImageTab(QWidget):
         self._run_q_btn.clicked.connect(self._run_queue)
         rm_q_btn = QPushButton("✕ Remove")
         rm_q_btn.setObjectName("secondary")
+        rm_q_btn.setProperty("compact", True)
         rm_q_btn.setFixedHeight(30)
         rm_q_btn.setToolTip("Remove selected job")
         rm_q_btn.clicked.connect(self._remove_queue_item)
         clr_q_btn = QPushButton("🗑 Clear")
         clr_q_btn.setObjectName("secondary")
+        clr_q_btn.setProperty("compact", True)
         clr_q_btn.setFixedHeight(30)
         clr_q_btn.setToolTip("Clear queue")
         clr_q_btn.clicked.connect(self._clear_queue)
@@ -1495,7 +1516,7 @@ class TextToImageTab(QWidget):
 # Tab 2 — Scene Composer
 # ------------------------------------------------------------------ #
 
-class SceneComposerTab(QWidget):
+class SceneComposerTab(_FitLeftPanelMixin, QWidget):
     def __init__(self, settings: dict, host: "MainWindow", parent=None):
         super().__init__(parent)
         self._settings = settings
@@ -1515,6 +1536,7 @@ class SceneComposerTab(QWidget):
         left.setContentsMargins(4, 4, 4, 4)
 
         left_scroll = QScrollArea()
+        self._left_scroll = left_scroll
         left_scroll.setWidget(left_widget)
         left_scroll.setWidgetResizable(True)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1528,6 +1550,7 @@ class SceneComposerTab(QWidget):
         self._wf_combo = QComboBox()
         wf_reload = QPushButton("↻ Reload")
         wf_reload.setObjectName("secondary")
+        wf_reload.setProperty("compact", True)
         wf_reload.setFixedHeight(34)
         wf_reload.setToolTip("Reload workflows")
         wf_reload.clicked.connect(self._reload_workflows)
@@ -1617,6 +1640,7 @@ class SceneComposerTab(QWidget):
         self._seed.setValue(-1)
         rand_btn = QPushButton("🎲 Random")
         rand_btn.setObjectName("secondary")
+        rand_btn.setProperty("compact", True)
         rand_btn.setFixedHeight(30)
         rand_btn.clicked.connect(lambda: self._seed.setValue(-1))
         seed_inner.addWidget(self._seed)
@@ -1633,6 +1657,7 @@ class SceneComposerTab(QWidget):
         self._out_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         out_browse = QPushButton("Browse")
         out_browse.setObjectName("secondary")
+        out_browse.setProperty("compact", True)
         out_browse.setFixedHeight(36)
         out_browse.clicked.connect(self._browse_output)
         out_row.addWidget(self._out_edit)
@@ -1821,7 +1846,7 @@ class SceneComposerTab(QWidget):
 # Tab 3 — Img2img Variations
 # ------------------------------------------------------------------ #
 
-class ImageVariationsTab(QWidget):
+class ImageVariationsTab(_FitLeftPanelMixin, QWidget):
     def __init__(self, settings: dict, host: "MainWindow", parent=None):
         super().__init__(parent)
         self._settings = settings
@@ -1842,6 +1867,7 @@ class ImageVariationsTab(QWidget):
         left.setContentsMargins(4, 4, 4, 4)
 
         left_scroll = QScrollArea()
+        self._left_scroll = left_scroll
         left_scroll.setWidget(left_widget)
         left_scroll.setWidgetResizable(True)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1855,6 +1881,7 @@ class ImageVariationsTab(QWidget):
         self._wf_combo = QComboBox()
         wf_reload = QPushButton("↻ Reload")
         wf_reload.setObjectName("secondary")
+        wf_reload.setProperty("compact", True)
         wf_reload.setFixedHeight(34)
         wf_reload.setToolTip("Reload workflows")
         wf_reload.clicked.connect(self._reload_workflows)
@@ -1950,6 +1977,7 @@ class ImageVariationsTab(QWidget):
         self._seed.setValue(-1)
         rand_btn = QPushButton("🎲 Random")
         rand_btn.setObjectName("secondary")
+        rand_btn.setProperty("compact", True)
         rand_btn.setFixedHeight(30)
         rand_btn.clicked.connect(lambda: self._seed.setValue(-1))
         seed_inner.addWidget(self._seed)
@@ -1966,6 +1994,7 @@ class ImageVariationsTab(QWidget):
         self._out_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         out_browse = QPushButton("Browse")
         out_browse.setObjectName("secondary")
+        out_browse.setProperty("compact", True)
         out_browse.setFixedHeight(36)
         out_browse.clicked.connect(self._browse_output)
         out_row.addWidget(self._out_edit)
@@ -2204,6 +2233,7 @@ class LibraryTab(QWidget):
         self._filter_edit.textChanged.connect(self._apply_filter)
         clear_filter_btn = QPushButton("✕ Clear")
         clear_filter_btn.setObjectName("secondary")
+        clear_filter_btn.setProperty("compact", True)
         clear_filter_btn.setFixedHeight(28)
         clear_filter_btn.setToolTip("Clear filter")
         clear_filter_btn.clicked.connect(lambda: self._filter_edit.clear())
