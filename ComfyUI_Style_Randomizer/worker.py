@@ -1,4 +1,5 @@
 import csv
+import io
 import json
 import random
 import re
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import requests
+from PIL import Image, ImageOps
 from PyQt6.QtCore import QThread, pyqtSignal
 
 PROMPT_SEPARATOR = "---- PROMPT START -----"
@@ -21,6 +23,67 @@ _SEP_RE = re.compile(
     r"^-+\s*PROMPT START(?:\s+x\s*(\d+(?:\.\d+)?))?\s*-+\s*$",
     re.MULTILINE,
 )
+
+
+# How the main character reaches the workflow:
+#   reference    - uploaded as its own image into the workflow's 2nd Load Image
+#   stitch_left  - joined side by side with the folder image into ONE image
+#   stitch_right   (main character on the left / right), sent to the 1st Load Image
+MAIN_MODES = ("reference", "stitch_left", "stitch_right")
+STITCH_MAX_HEIGHT = 1536   # the workflow rescales to ~2 MP anyway; keeps uploads small
+
+
+# Output shape: the aspect ratio (width, height) the new image is generated at.
+# "auto" leaves the workflow alone (most workflows size the result from the input
+# image, so a side-by-side stitch gives a wide result).
+OUTPUT_SHAPES = {
+    "auto":          None,
+    "portrait_2_3":  (2, 3),
+    "portrait_3_4":  (3, 4),
+    "square":        (1, 1),
+    "landscape_4_3": (4, 3),
+    "landscape_3_2": (3, 2),
+}
+# Nodes whose width/height decide the size of the generated image
+_LATENT_SIZE_NODES = {"EmptyFlux2LatentImage", "EmptyLatentImage", "EmptySD3LatentImage"}
+_SIZE_AWARE_NODES = _LATENT_SIZE_NODES | {"Flux2Scheduler"}   # scheduler uses the size for its shift
+
+
+def shape_dimensions(aspect: tuple[int, int], megapixels: float) -> tuple[int, int]:
+    """(width, height) for `aspect` holding about `megapixels` MP, both snapped to
+    multiples of 16 (the latent grid of Flux-style models). The width follows the
+    pixel budget and the height follows the width, so the ratio stays as exact as
+    the 16 px grid allows (a square really is square)."""
+    aw, ah = aspect
+    width = max(16, round((megapixels * 1_000_000 * aw / ah) ** 0.5 / 16) * 16)
+    height = max(16, round(width * ah / aw / 16) * 16)
+    return width, height
+
+
+def _flat_rgb(path: Path) -> Image.Image:
+    """Open an image upright (EXIF) and flat RGB - transparency goes onto white."""
+    img = ImageOps.exif_transpose(Image.open(path))
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        img = img.convert("RGBA")
+        bg = Image.new("RGB", img.size, "white")
+        bg.paste(img, mask=img.getchannel("A"))
+        return bg
+    return img.convert("RGB")
+
+
+def stitch_side_by_side(left: Path, right: Path, max_height: int = STITCH_MAX_HEIGHT) -> bytes:
+    """PNG bytes of `left` and `right` joined into one image, both scaled to the
+    same height (the taller one's, capped at max_height), aspect ratios kept."""
+    a, b = _flat_rgb(left), _flat_rgb(right)
+    height = min(max_height, max(a.height, b.height))
+    scaled = [im.resize((max(1, round(im.width * height / im.height)), height), Image.LANCZOS)
+              for im in (a, b)]
+    canvas = Image.new("RGB", (scaled[0].width + scaled[1].width, height), "white")
+    canvas.paste(scaled[0], (0, 0))
+    canvas.paste(scaled[1], (scaled[0].width, 0))
+    out = io.BytesIO()
+    canvas.save(out, format="PNG")
+    return out.getvalue()
 
 
 class PromptEntry(NamedTuple):
@@ -118,6 +181,12 @@ def describe_prompt_rejection(resp) -> str:
     return head + "".join(f"\n    {x}" for x in parts[:5])
 
 
+def describe_execution_error(info: dict) -> str:
+    """One line for an execution_error (websocket message or /history record)."""
+    return (f"{info.get('exception_type', 'Error')} in node {info.get('node_id', '?')} "
+            f"({info.get('node_type', '?')}): {_short(info.get('exception_message', ''))}")
+
+
 def describe_history_error(entry: dict) -> str | None:
     """The failure recorded in a /history entry, or None if it did not fail."""
     status = entry.get("status") or {}
@@ -125,8 +194,7 @@ def describe_history_error(entry: dict) -> str | None:
         return None
     for kind, info in status.get("messages") or []:
         if kind == "execution_error" and isinstance(info, dict):
-            return (f"{info.get('exception_type', 'Error')} in node {info.get('node_id', '?')} "
-                    f"({info.get('node_type', '?')}): {_short(info.get('exception_message', ''))}")
+            return describe_execution_error(info)
     return "ComfyUI reported an execution error"
 
 
@@ -140,6 +208,8 @@ class BatchStyleWorker(QThread):
     log      = pyqtSignal(str)
     all_done = pyqtSignal()
     error    = pyqtSignal(str)
+    image_done = pyqtSignal(str, str)  # source image stem, saved output path - emitted per image
+    step     = pyqtSignal(int, int)    # sampler step, of total - for the current image; (0, 0) = preparing
 
     def __init__(self, config: dict, prompts: list[PromptEntry], image_paths: list[Path],
                  fixed_prompt: str | None = None, prompt_mode: str = "random",
@@ -153,6 +223,9 @@ class BatchStyleWorker(QThread):
         self._pinned        = pinned or {}
         self._base_dir      = base_dir
         self._cancelled     = False
+        self._shape_warned = False
+        self._main_path: Path | None = None
+        self._main_stitch_left: bool | None = None   # None = not stitching
         self._client_id   = str(uuid.uuid4())
         runpod = config.get("mode", "local") == "runpod"
         self._url = (
@@ -209,6 +282,14 @@ class BatchStyleWorker(QThread):
                     f"\n=== Run started {datetime.now().strftime('%H:%M:%S')} — "
                     f"{total} images, {len(self._prompts)} prompts ===",
                 )
+
+            main_uploaded = self._upload_main_character(base_workflow)
+            shape = self._config.get("output_shape", "auto")
+            if OUTPUT_SHAPES.get(shape):
+                mp = next((float(n["inputs"].get("megapixels", 1.0)) for n in base_workflow.values()
+                           if n.get("class_type") == "ImageScaleToTotalPixels"), 1.0)
+                w_, h_ = shape_dimensions(OUTPUT_SHAPES[shape], mp)
+                self._log(f"Output shape: {shape.replace('_', ' ')} ({w_}x{h_})")
 
             texts   = [e.text for e in self._prompts]
             weights = [e.weight for e in self._prompts]
@@ -277,14 +358,24 @@ class BatchStyleWorker(QThread):
                         f"{prompt.replace(chr(10), ' ')}",
                     )
 
+                self.step.emit(0, 0)
                 try:
                     workflow = json.loads(json.dumps(base_workflow))
                     seed     = random.randint(1, 2**31)
 
-                    uploaded = self._upload_image(img_path)
-                    self._patch_image(workflow, uploaded)
+                    if self._main_stitch_left is not None:
+                        # main character + this folder image become ONE image
+                        left, right = ((self._main_path, img_path) if self._main_stitch_left
+                                       else (img_path, self._main_path))
+                        uploaded = self._upload_image(
+                            img_path, upload_name=f"{img_path.stem}_stitched.png",
+                            data=stitch_side_by_side(left, right))
+                    else:
+                        uploaded = self._upload_image(img_path)
+                    self._patch_image(workflow, uploaded, main_uploaded)
                     self._patch_prompt(workflow, prompt)
                     self._patch_seed(workflow, seed)
+                    self._patch_output_shape(workflow)
 
                     prompt_id = self._queue_prompt(workflow)
                     self._poll_until_done(prompt_id)
@@ -299,6 +390,7 @@ class BatchStyleWorker(QThread):
 
                     saved = self._get_output(prompt_id, img_path)
                     self._log(f"  ✓ {saved.name}")
+                    self.image_done.emit(img_path.stem, str(saved))
                     log_prompt_used(self._output_dir, saved.name, prompt_idx, prompt, weight_used, note)
                     failures = 0
                 except ComfyRunError as exc:
@@ -325,6 +417,44 @@ class BatchStyleWorker(QThread):
         except Exception as exc:
             self.error.emit(str(exc))
 
+    def _upload_main_character(self, workflow: dict) -> str | None:
+        """Prepare the main character for the run. Returns the server-side name
+        of its uploaded image in "reference" mode; None when the feature is off
+        or in a stitch mode (where it is joined to each folder image instead -
+        self._main_stitch_left says on which side).
+
+        The reference upload goes up under a "main_character_" name so it can
+        never overwrite (the upload uses overwrite=true) a folder image that has
+        the same file name."""
+        self._main_stitch_left = None
+        if not self._config.get("main_character_enabled", False):
+            return None
+        path = Path(self._config.get("main_character_path", "") or "")
+        if not path.is_file():
+            raise ComfyRunError(f"Main character image not found: {path}")
+        self._main_path = path
+        mode = self._config.get("main_character_mode", "reference")
+        if mode not in MAIN_MODES:
+            mode = "reference"
+
+        if mode == "reference":
+            if self.find_main_character_node(workflow) is None:
+                raise ComfyRunError(
+                    "The main character is set to go in as a separate reference, but this "
+                    "workflow has only one Load Image node. Choose 'Stitched into one image' "
+                    "for the main character, or use a workflow with a second Load Image "
+                    "node (title it 'Main Character').")
+            how = "separate reference"
+            name = self._upload_image(path, upload_name=f"main_character_{path.name}")
+        else:
+            self._main_stitch_left = (mode == "stitch_left")
+            how = f"stitched into each image, on the {'left' if self._main_stitch_left else 'right'}"
+            name = None
+        self._log(f"Main character: {path.name} ({how})")
+        if self._base_dir:
+            append_daily_log(self._base_dir, f"Main character: {path} ({how})")
+        return name
+
     def _abort(self, msg: str, start_time: float):
         """Stop the whole run: log it, tell the window (which shows the error)."""
         elapsed = self._format_elapsed(time.time() - start_time)
@@ -337,11 +467,28 @@ class BatchStyleWorker(QThread):
     # Workflow patching
     # ------------------------------------------------------------------ #
 
-    def _patch_image(self, workflow: dict, filename: str):
-        for node in workflow.values():
-            if node.get("class_type") == "LoadImage":
+    @staticmethod
+    def find_main_character_node(workflow: dict) -> str | None:
+        """ID of the LoadImage that holds the fixed "main character" photo: the
+        one titled "...main character...", else the second LoadImage in the file.
+        None when the workflow has no second image slot."""
+        loads = [(nid, n) for nid, n in workflow.items() if n.get("class_type") == "LoadImage"]
+        for nid, n in loads:
+            if "main character" in (n.get("_meta") or {}).get("title", "").lower():
+                return nid
+        return loads[1][0] if len(loads) > 1 else None
+
+    def _patch_image(self, workflow: dict, filename: str, main_filename: str | None = None):
+        """The folder image goes in the first LoadImage that is not the main
+        character slot. The main character slot is only touched when a main
+        character is set - otherwise the workflow keeps whatever it names."""
+        main_id = self.find_main_character_node(workflow)
+        for nid, node in workflow.items():
+            if node.get("class_type") == "LoadImage" and nid != main_id:
                 node["inputs"]["image"] = filename
-                return
+                break
+        if main_filename and main_id is not None:
+            workflow[main_id]["inputs"]["image"] = main_filename
 
     def _patch_prompt(self, workflow: dict, prompt: str):
         # Prefer PrimitiveStringMultiline (Qwen / some custom workflows)
@@ -355,6 +502,40 @@ class BatchStyleWorker(QThread):
                 if "neg" not in node.get("_meta", {}).get("title", "").lower():
                     node["inputs"]["text"] = prompt
                     return
+
+    def _patch_output_shape(self, workflow: dict) -> bool:
+        """Force the generated image's aspect ratio (config "output_shape").
+
+        The size is written straight into the latent / scheduler nodes, cutting
+        the link to the "Get Image Size" node, so the input image (or a stitched
+        pair) can have any shape and the result still comes out as asked. The
+        pixel budget is the one the workflow already uses for its input scale
+        (ImageScaleToTotalPixels), else 1 MP. Returns False when the workflow
+        has nothing to resize."""
+        aspect = OUTPUT_SHAPES.get(self._config.get("output_shape", "auto"))
+        if aspect is None:
+            return True
+        megapixels = 1.0
+        for node in workflow.values():
+            if node.get("class_type") == "ImageScaleToTotalPixels":
+                try:
+                    megapixels = float(node["inputs"].get("megapixels", 1.0))
+                except (TypeError, ValueError):
+                    pass
+                break
+        width, height = shape_dimensions(aspect, megapixels)
+        patched = 0
+        for node in workflow.values():
+            ct = node.get("class_type")
+            if ct in _SIZE_AWARE_NODES:
+                node["inputs"]["width"], node["inputs"]["height"] = width, height
+                patched += ct in _LATENT_SIZE_NODES
+        if not patched:
+            if not self._shape_warned:
+                self._log("  (output shape ignored - this workflow has no latent-size node to set)")
+                self._shape_warned = True
+            return False
+        return True
 
     def _patch_seed(self, workflow: dict, seed: int):
         for node in workflow.values():
@@ -370,14 +551,17 @@ class BatchStyleWorker(QThread):
     # ComfyUI API helpers
     # ------------------------------------------------------------------ #
 
-    def _upload_image(self, img_path: Path) -> str:
-        with open(img_path, "rb") as f:
-            resp = requests.post(
-                f"{self._url}/upload/image",
-                files={"image": (img_path.name, f, "image/png")},
-                data={"type": "input", "overwrite": "true"},
-                timeout=120,
-            )
+    def _upload_image(self, img_path: Path, upload_name: str | None = None,
+                      data: bytes | None = None) -> str:
+        """Upload img_path (or `data` in its place) to the server's input folder."""
+        if data is None:
+            data = img_path.read_bytes()
+        resp = requests.post(
+            f"{self._url}/upload/image",
+            files={"image": (upload_name or img_path.name, data, "image/png")},
+            data={"type": "input", "overwrite": "true"},
+            timeout=120,
+        )
         resp.raise_for_status()
         return resp.json()["name"]
 
@@ -393,6 +577,81 @@ class BatchStyleWorker(QThread):
         return resp.json()["prompt_id"]
 
     def _poll_until_done(self, prompt_id: str):
+        """Wait for the prompt to finish. Live sampler steps over ComfyUI's
+        websocket (the same approach as the Video Creator and Chain Automator);
+        plain HTTP polling when the socket cannot be used."""
+        self.step.emit(0, 0)
+        try:
+            import websocket
+        except ImportError:
+            return self._poll_http(prompt_id)
+        ws_url = self._url.replace("https://", "wss://").replace("http://", "ws://")
+        try:
+            ws = websocket.create_connection(f"{ws_url}/ws?clientId={self._client_id}", timeout=20)
+            ws.settimeout(5)
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"  (live step progress unavailable: {type(exc).__name__} - polling instead)")
+            return self._poll_http(prompt_id)
+
+        start = time.time()
+        last_minute = 0
+        try:
+            while not self._cancelled:
+                try:
+                    msg = ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    # Quiet stretch (model load, VAE decode): confirm through the
+                    # history so a missed finish message cannot hang the run.
+                    try:
+                        if self._history_finished(prompt_id):
+                            return
+                    except requests.RequestException:
+                        pass
+                    minute = int(time.time() - start) // 60
+                    if minute > last_minute:
+                        last_minute = minute
+                        self._log(f"  Generating... ({minute}m)")
+                    continue
+                except Exception:  # noqa: BLE001
+                    self._log("  Websocket dropped - polling instead")
+                    return self._poll_http(prompt_id)
+
+                if isinstance(msg, bytes):
+                    continue                      # binary preview frames
+                try:
+                    payload = json.loads(msg)
+                except ValueError:
+                    continue
+                mtype = payload.get("type")
+                data = payload.get("data") or {}
+                if data.get("prompt_id") not in (None, prompt_id):
+                    continue                      # another job's message
+                if mtype == "progress":
+                    self.step.emit(int(data.get("value", 0)), int(data.get("max", 0)))
+                elif mtype == "executing" and data.get("node") is None:
+                    return                        # the prompt finished
+                elif mtype == "execution_success" or mtype == "execution_interrupted":
+                    return
+                elif mtype == "execution_error":
+                    raise ComfyRunError(
+                        f"ComfyUI failed while generating - {describe_execution_error(data)}")
+        finally:
+            try:
+                ws.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _history_finished(self, prompt_id: str) -> bool:
+        """True once /history has the prompt; raises ComfyRunError if it failed."""
+        h = requests.get(f"{self._url}/history/{prompt_id}", timeout=10).json()
+        if prompt_id not in h:
+            return False
+        why = describe_history_error(h[prompt_id])
+        if why:
+            raise ComfyRunError(f"ComfyUI failed while generating - {why}")
+        return True
+
+    def _poll_http(self, prompt_id: str):
         elapsed = 0
         while not self._cancelled:
             time.sleep(3)
@@ -405,11 +664,7 @@ class BatchStyleWorker(QThread):
                     if elapsed % 60 == 0:
                         self._log(f"  Generating... ({elapsed // 60}m)")
                     continue
-                h = requests.get(f"{self._url}/history/{prompt_id}", timeout=10).json()
-                if prompt_id in h:
-                    why = describe_history_error(h[prompt_id])
-                    if why:
-                        raise ComfyRunError(f"ComfyUI failed while generating - {why}")
+                if self._history_finished(prompt_id):
                     return
             except requests.RequestException as exc:
                 self._log(f"  Poll error: {exc}")

@@ -7,10 +7,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QTextCursor
 from PyQt6.QtCore import Qt
 
+import scene_history
 from config import ConfigManager
 from llm_worker import PromptWorker, ModelListWorker
 from providers import PROVIDERS
 from worker import PROMPT_SEPARATOR, parse_prompts
+from ui.scene_history_dialog import SceneHistoryDialog
 from ui.styles import COLORS
 
 SCENE_SYSTEM_PROMPT_TMPL = """You write style-transfer prompts for an image-to-image AI pipeline that batch-restyles photos.
@@ -40,11 +42,62 @@ class PromptEditorDialog(QDialog):
         self._worker: PromptWorker | None = None
         self._model_worker: ModelListWorker | None = None
         self.setWindowTitle(f"Edit Prompts — {prompts_file.name}")
-        self.setMinimumSize(700, 640)
+        self.setMinimumSize(700, 700)
         self._build_ui()
         self._load()
-        self._scenario_edit.setText(config.get("scene_gen_scenario", ""))
+        self._scenario_edit.setPlainText(config.get("scene_gen_scenario", ""))
+        self._idea_edit.setPlainText(config.get("scene_gen_idea", ""))
+        self._count_spin.setValue(int(config.get("scene_gen_count", 6) or 6))
+        size = config.get("prompt_editor_size")
+        if isinstance(size, list) and len(size) == 2:
+            self.resize(max(700, int(size[0])), max(700, int(size[1])))
         self._on_provider_changed()
+
+    @staticmethod
+    def _make_text_box(lines: int = 4) -> QPlainTextEdit:
+        """A wrapped text box about `lines` lines tall (long descriptions stay readable)."""
+        edit = QPlainTextEdit()
+        edit.setTabChangesFocus(True)
+        edit.setFixedHeight(edit.fontMetrics().lineSpacing() * lines + 16)
+        return edit
+
+    def _make_expand_btn(self, edit: QPlainTextEdit, title: str) -> QPushButton:
+        btn = QPushButton("⤢")
+        btn.setObjectName("small_btn")
+        btn.setFixedSize(32, 28)
+        btn.setToolTip(f"Open a larger editor for the {title}")
+        btn.clicked.connect(lambda: self._expand_text(edit, title))
+        return btn
+
+    def _expand_text(self, edit: QPlainTextEdit, title: str):
+        """Edit the same text in a big window; OK writes it back, Cancel discards."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.resize(820, 420)
+        v = QVBoxLayout(dlg)
+        big = QPlainTextEdit()
+        big.setPlainText(edit.toPlainText())
+        big.setPlaceholderText(edit.placeholderText())
+        v.addWidget(big, stretch=1)
+        row = QHBoxLayout()
+        row.addStretch()
+        cancel = QPushButton("Cancel")
+        cancel.setObjectName("cancel_btn")
+        cancel.setMinimumWidth(100)
+        cancel.clicked.connect(dlg.reject)
+        ok = QPushButton("OK")
+        ok.setMinimumWidth(100)
+        ok.clicked.connect(dlg.accept)
+        row.addWidget(cancel)
+        row.addWidget(ok)
+        v.addLayout(row)
+        if dlg.exec():
+            edit.setPlainText(big.toPlainText())
+
+    @staticmethod
+    def _one_line(edit: QPlainTextEdit) -> str:
+        """The box's text as a single line (line breaks / runs of spaces -> one space)."""
+        return " ".join(edit.toPlainText().split())
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -58,7 +111,8 @@ class PromptEditorDialog(QDialog):
         scenario_row = QHBoxLayout()
         scenario_lbl = QLabel("Scenario:")
         scenario_lbl.setStyleSheet(f"color:{COLORS['fg_secondary']}; font-size:10pt;")
-        self._scenario_edit = QLineEdit()
+        scenario_lbl.setFixedWidth(70)
+        self._scenario_edit = self._make_text_box()
         self._scenario_edit.setPlaceholderText(
             'Optional fixed shot/subject description, e.g. "Close-up, upper body in frame. '
             'A couple set in <scene description>."'
@@ -68,19 +122,24 @@ class PromptEditorDialog(QDialog):
             "placeholder (or text following it) varies per generation. Leave blank to let the\n"
             "AI write the whole prompt freely from the Idea below."
         )
-        scenario_row.addWidget(scenario_lbl)
+        scenario_row.addWidget(scenario_lbl, alignment=Qt.AlignmentFlag.AlignTop)
         scenario_row.addWidget(self._scenario_edit, stretch=1)
+        scenario_row.addWidget(self._make_expand_btn(self._scenario_edit, "Scenario"),
+                               alignment=Qt.AlignmentFlag.AlignTop)
         gen_v.addLayout(scenario_row)
 
         idea_row = QHBoxLayout()
         idea_lbl = QLabel("Idea:")
         idea_lbl.setStyleSheet(f"color:{COLORS['fg_secondary']}; font-size:10pt;")
-        self._idea_edit = QLineEdit()
+        idea_lbl.setFixedWidth(70)
+        self._idea_edit = self._make_text_box()
         self._idea_edit.setPlaceholderText(
             "e.g. 1970s rock concert backstage, moody film grain..."
         )
-        idea_row.addWidget(idea_lbl)
+        idea_row.addWidget(idea_lbl, alignment=Qt.AlignmentFlag.AlignTop)
         idea_row.addWidget(self._idea_edit, stretch=1)
+        idea_row.addWidget(self._make_expand_btn(self._idea_edit, "Idea"),
+                           alignment=Qt.AlignmentFlag.AlignTop)
         gen_v.addLayout(idea_row)
 
         provider_row = QHBoxLayout()
@@ -126,6 +185,13 @@ class PromptEditorDialog(QDialog):
         self._gen_btn.setObjectName("small_btn")
         self._gen_btn.clicked.connect(self._on_generate)
         gen_btn_row.addWidget(self._gen_btn)
+        self._history_btn = QPushButton("📜  History")
+        self._history_btn.setObjectName("small_btn")
+        self._history_btn.setToolTip(
+            "Every Scenario + Idea pair you generated from, newest first -\n"
+            "find one by words and load it back into the boxes.")
+        self._history_btn.clicked.connect(self._open_history)
+        gen_btn_row.addWidget(self._history_btn)
         self._gen_status_lbl = QLabel("")
         self._gen_status_lbl.setObjectName("subtitle")
         gen_btn_row.addWidget(self._gen_status_lbl, stretch=1)
@@ -263,8 +329,27 @@ class PromptEditorDialog(QDialog):
         self._model_combo.blockSignals(False)
         self._gen_status_lbl.setText(f"Loaded {len(models)} model(s) from {PROVIDERS[provider_id]['label']}.")
 
+    def _open_history(self):
+        dlg = SceneHistoryDialog(scene_history.history_path(self._config), self)
+        if dlg.exec() and dlg.chosen:
+            self._scenario_edit.setPlainText(dlg.chosen.get("scenario", ""))
+            self._idea_edit.setPlainText(dlg.chosen.get("idea", ""))
+            if dlg.chosen.get("count"):
+                self._count_spin.setValue(int(dlg.chosen["count"]))
+            self._gen_status_lbl.setText("Loaded from history - press Generate to use it.")
+
+    def done(self, result: int):
+        """Whatever way the dialog closes (Save, Cancel, X), remember the
+        generator's boxes and the window size for the next time it opens."""
+        self._config.set("scene_gen_scenario", self._one_line(self._scenario_edit))
+        self._config.set("scene_gen_idea", self._one_line(self._idea_edit))
+        self._config.set("scene_gen_count", self._count_spin.value())
+        self._config.set("prompt_editor_size", [self.width(), self.height()])
+        self._config.save()
+        super().done(result)
+
     def _on_generate(self):
-        idea = self._idea_edit.text().strip()
+        idea = self._one_line(self._idea_edit)
         if not idea:
             self._gen_status_lbl.setText("Enter a scene idea first.")
             return
@@ -280,13 +365,20 @@ class PromptEditorDialog(QDialog):
             self._gen_status_lbl.setText("Enter or pick a model.")
             return
 
-        scenario = self._scenario_edit.text().strip()
+        scenario = self._one_line(self._scenario_edit)
 
         last_model = self._config.get("scene_gen_last_model", {})
         last_model[provider_id] = model
         self._config.set("scene_gen_last_model", last_model)
         self._config.set("scene_gen_scenario", scenario)
+        self._config.set("scene_gen_idea", idea)
+        self._config.set("scene_gen_count", self._count_spin.value())
         self._config.save()
+        try:
+            scene_history.record(scene_history.history_path(self._config), scenario, idea,
+                                 self._count_spin.value(), provider_id, model)
+        except OSError:
+            pass            # a history that cannot be written must not stop the generation
 
         n = self._count_spin.value()
         scenario_block = (

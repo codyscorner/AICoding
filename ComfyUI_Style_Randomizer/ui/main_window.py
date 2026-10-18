@@ -3,7 +3,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PIL import Image, ImageOps
-from PyQt6.QtCore import Qt, QSize, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QByteArray, QSize, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap, QIcon, QPainter, QImage, QColor, QFont
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QLineEdit,
@@ -444,6 +444,18 @@ class ImageViewerDialog(QDialog):
 # Thumbnail grid
 # ------------------------------------------------------------------ #
 
+def _paint_done_badge(painter: QPainter):
+    """The green check in a thumbnail's top-right corner (image already processed)."""
+    badge = 26
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setBrush(QColor(30, 190, 60, 230))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawEllipse(THUMB_SIZE - badge - 3, 3, badge, badge)
+    painter.setPen(QColor(255, 255, 255))
+    painter.setFont(QFont("Arial", 13, QFont.Weight.Bold))
+    painter.drawText(THUMB_SIZE - badge - 3, 3, badge, badge, Qt.AlignmentFlag.AlignCenter, "✓")
+
+
 class ThumbnailGrid(QListWidget):
     def __init__(self, parent=None, selection_mode=QAbstractItemView.SelectionMode.NoSelection):
         super().__init__(parent)
@@ -482,18 +494,7 @@ class ThumbnailGrid(QListWidget):
             painter.setFont(f)
             painter.drawText(3, 3, badge, badge, Qt.AlignmentFlag.AlignCenter, "📌")
         if is_processed:
-            badge = 26
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setBrush(QColor(30, 190, 60, 230))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(THUMB_SIZE - badge - 3, 3, badge, badge)
-            painter.setPen(QColor(255, 255, 255))
-            f = QFont("Arial", 13, QFont.Weight.Bold)
-            painter.setFont(f)
-            painter.drawText(
-                THUMB_SIZE - badge - 3, 3, badge, badge,
-                Qt.AlignmentFlag.AlignCenter, "✓"
-            )
+            _paint_done_badge(painter)
         painter.end()
         item = QListWidgetItem(QIcon(canvas), label)
         item.setData(Qt.ItemDataRole.UserRole, key)
@@ -506,6 +507,18 @@ class ThumbnailGrid(QListWidget):
 
     def selected_keys(self) -> list[str]:
         return [item.data(Qt.ItemDataRole.UserRole) for item in self.selectedItems()]
+
+    def mark_processed(self, stem: str):
+        """Put the green check on a thumbnail already in the grid."""
+        for i in range(self.count()):
+            item = self.item(i)
+            key = item.data(Qt.ItemDataRole.UserRole) if item else None
+            if key and Path(key).stem == stem:
+                canvas = item.icon().pixmap(THUMB_SIZE, THUMB_SIZE).copy()
+                painter = QPainter(canvas)
+                _paint_done_badge(painter)
+                painter.end()
+                item.setIcon(QIcon(canvas))
 
     def remove_items_by_stems(self, stems: set[str]):
         for i in range(self.count() - 1, -1, -1):
@@ -549,6 +562,7 @@ class MainWindow(QMainWindow):
         self._pod_only_declined: set[str] = set()                # "run on the pod" answers, this session
 
         self._build_ui()
+        self._restore_view_settings()
         self._load_initial_state()
         # After the window is actually on screen, so the pod prompt has a
         # parent to centre on rather than appearing behind it.
@@ -557,6 +571,23 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # UI construction
     # ------------------------------------------------------------------ #
+
+    def _restore_view_settings(self):
+        """Bring back what was set last time: prompt order, Auto Run batch size,
+        and where the window was. Saved as they change (and the window on close)."""
+        idx = self._prompt_order_combo.findData(self._config.get("prompt_order", "evens_odds"))
+        self._prompt_order_combo.setCurrentIndex(max(0, idx))
+        self._auto_size_spin.setValue(int(self._config.get("auto_batch_size", 4) or 4))
+        self._prompt_order_combo.currentIndexChanged.connect(self._on_view_setting_changed)
+        self._auto_size_spin.valueChanged.connect(self._on_view_setting_changed)
+        geo = self._config.get("window_geometry", "")
+        if geo:
+            self.restoreGeometry(QByteArray.fromBase64(geo.encode("ascii")))
+
+    def _on_view_setting_changed(self, *_):
+        self._config.set("prompt_order", self._prompt_order_combo.currentData())
+        self._config.set("auto_batch_size", self._auto_size_spin.value())
+        self._config.save()
 
     def _build_ui(self):
         title = f"ComfyUI Style Randomizer v{self._version}" if self._version else "ComfyUI Style Randomizer"
@@ -635,7 +666,7 @@ class MainWindow(QMainWindow):
         # Input folder row
         input_row = QHBoxLayout()
         input_lbl = QLabel("Input Folder:")
-        input_lbl.setFixedWidth(100)
+        input_lbl.setFixedWidth(120)
         input_lbl.setStyleSheet(f"color:{COLORS['fg_secondary']}; font-size:10pt;")
         self._input_edit = QLineEdit()
         self._input_edit.setText(self._config.get("input_dir", ""))
@@ -660,6 +691,51 @@ class MainWindow(QMainWindow):
         input_row.addSpacing(10)
         input_row.addWidget(self._show_all_chk)
         layout.addLayout(input_row)
+
+        # Main character row: one fixed photo used as the workflow's second image
+        main_row = QHBoxLayout()
+        self._main_chk = QCheckBox("Main character:")
+        self._main_chk.setFixedWidth(120)
+        self._main_chk.setStyleSheet(f"color:{COLORS['fg_secondary']}; font-size:10pt;")
+        self._main_chk.setToolTip(
+            "Use one fixed photo (e.g. you) as the second reference image on every run,\n"
+            "while the images in the Input Folder rotate through the first.")
+        self._main_chk.setChecked(bool(self._config.get("main_character_enabled", False)))
+        self._main_chk.stateChanged.connect(self._on_main_character_changed)
+        self._main_edit = QLineEdit()
+        self._main_edit.setText(self._config.get("main_character_path", ""))
+        self._main_edit.setPlaceholderText("Photo of the person who stays the same in every image…")
+        self._main_edit.editingFinished.connect(self._on_main_character_changed)
+        main_browse = QPushButton("Browse")
+        main_browse.setObjectName("small_btn")
+        main_browse.setFixedWidth(70)
+        main_browse.clicked.connect(self._browse_main_character)
+        self._main_mode_combo = QComboBox()
+        self._main_mode_combo.addItem("Stitched, main on left", "stitch_left")
+        self._main_mode_combo.addItem("Stitched, main on right", "stitch_right")
+        self._main_mode_combo.addItem("Separate 2nd reference", "reference")
+        self._main_mode_combo.setToolTip(
+            "How the main character reaches the workflow:\n"
+            "• Stitched - joined side by side with each folder image into ONE image\n"
+            "  (for one-image workflows such as Flux2 Dev).\n"
+            "• Separate 2nd reference - its own image in the workflow's second\n"
+            "  Load Image node (needs a workflow with two, such as Qwen 2.1).")
+        idx = self._main_mode_combo.findData(self._config.get("main_character_mode", "stitch_left"))
+        self._main_mode_combo.setCurrentIndex(max(0, idx))
+        self._main_mode_combo.currentIndexChanged.connect(self._on_main_character_changed)
+        self._main_mode_combo.setFixedWidth(170)
+        self._main_thumb = QLabel()
+        self._main_thumb.setFixedSize(36, 36)
+        self._main_thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_row.addWidget(self._main_chk)
+        main_row.addWidget(self._main_edit, stretch=1)
+        main_row.addWidget(main_browse)
+        main_row.addSpacing(10)
+        main_row.addWidget(self._main_mode_combo)
+        main_row.addSpacing(10)
+        main_row.addWidget(self._main_thumb)
+        layout.addLayout(main_row)
+        self._refresh_main_thumb()
 
         # Splitter: thumbnails | prompts+log
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -712,7 +788,43 @@ class MainWindow(QMainWindow):
         self._progress = QProgressBar()
         self._progress.setFormat("%v / %m")
         self._progress.setValue(0)
-        bottom_row.addWidget(self._progress, stretch=1)
+        # Second, slimmer bar under the file counter: the sampler step of the
+        # image being generated right now.
+        self._step_bar = QProgressBar()
+        self._step_bar.setFixedHeight(16)
+        self._step_bar.setStyleSheet(
+            "QProgressBar { height: 14px; font-size: 8pt; }"
+            f"QProgressBar::chunk {{ background-color: {COLORS['accent']}; border-radius: 2px; }}")
+        self._reset_step_bar()
+        prog_col = QVBoxLayout()
+        prog_col.setSpacing(3)
+        prog_col.addWidget(self._progress)
+        prog_col.addWidget(self._step_bar)
+        bottom_row.addLayout(prog_col, stretch=1)
+
+        shape_lbl = QLabel("Shape:")
+        shape_lbl.setStyleSheet(f"color:{COLORS['fg_secondary']}; font-size:10pt;")
+        bottom_row.addWidget(shape_lbl)
+        self._shape_combo = QComboBox()
+        self._shape_combo.addItem("Auto (follow image)", "auto")
+        self._shape_combo.addItem("Portrait 2:3",        "portrait_2_3")
+        self._shape_combo.addItem("Portrait 3:4",        "portrait_3_4")
+        self._shape_combo.addItem("Square 1:1",          "square")
+        self._shape_combo.addItem("Landscape 4:3",       "landscape_4_3")
+        self._shape_combo.addItem("Landscape 3:2",       "landscape_3_2")
+        self._shape_combo.setFixedHeight(28)
+        self._shape_combo.setFixedWidth(150)
+        self._shape_combo.setToolTip(
+            "Shape of the generated image.\n"
+            "Auto: the workflow sizes it from the input image (a side-by-side\n"
+            "stitched pair therefore comes out wide).\n"
+            "Portrait / Square / Landscape: forced, at the workflow's own pixel\n"
+            "budget, whatever shape the input image has.")
+        idx = self._shape_combo.findData(self._config.get("output_shape", "auto"))
+        self._shape_combo.setCurrentIndex(max(0, idx))
+        self._shape_combo.currentIndexChanged.connect(self._on_shape_changed)
+        bottom_row.addWidget(self._shape_combo)
+        bottom_row.addSpacing(8)
 
         order_lbl = QLabel("Order:")
         order_lbl.setStyleSheet(f"color:{COLORS['fg_secondary']}; font-size:10pt;")
@@ -899,6 +1011,47 @@ class MainWindow(QMainWindow):
         self._config.save()
         self._reload_images()
 
+    def _on_shape_changed(self, *_):
+        self._config.set("output_shape", self._shape_combo.currentData())
+        self._config.save()
+
+    def _browse_main_character(self):
+        start = self._main_edit.text() or self._config.get("input_dir", "")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Main Character Image", start,
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp)")
+        if path:
+            self._main_edit.setText(path)
+            self._main_chk.setChecked(True)
+            self._on_main_character_changed()
+
+    def _on_main_character_changed(self, *_):
+        self._config.set("main_character_enabled", self._main_chk.isChecked())
+        self._config.set("main_character_path", self._main_edit.text().strip())
+        self._config.set("main_character_mode", self._main_mode_combo.currentData())
+        self._config.save()
+        self._refresh_main_thumb()
+
+    def _refresh_main_thumb(self):
+        path = Path(self._main_edit.text().strip())
+        pix = QPixmap(str(path)) if path.is_file() else QPixmap()
+        if pix.isNull():
+            self._main_thumb.clear()
+            self._main_thumb.setStyleSheet(f"border: 1px dashed {COLORS['border']};")
+            return
+        self._main_thumb.setStyleSheet(f"border: 1px solid {COLORS['border']};")
+        self._main_thumb.setPixmap(pix.scaled(
+            34, 34, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
+    def _main_character_problem(self) -> str | None:
+        """Why a run cannot start with the main character as set, or None."""
+        if not self._config.get("main_character_enabled", False):
+            return None
+        path = Path(self._config.get("main_character_path", "") or "")
+        if not path.is_file():
+            return "Main character is ticked but its image was not found. Pick a photo or untick it."
+        return None
+
     # ------------------------------------------------------------------ #
     # Data loading — main tab
     # ------------------------------------------------------------------ #
@@ -932,6 +1085,7 @@ class MainWindow(QMainWindow):
         show_all = self._show_all_chk.isChecked()
         processed = self._existing_output_stems()
         self._processed_count = len(processed)
+        self._processed_set = set(processed)
         self._loader = ImageLoaderThread(input_dir, processed_stems=processed, show_all=show_all)
         self._loader.image_ready.connect(
             lambda img, key, lbl, is_proc: self._thumb_grid.add_item(
@@ -1239,6 +1393,7 @@ class MainWindow(QMainWindow):
             base_dir=self._base_dir,
         )
         self._reroll_worker.log.connect(self._append_log)
+        self._reroll_worker.step.connect(self._on_step)
         self._reroll_worker.all_done.connect(self._on_reroll_done)
         self._reroll_worker.error.connect(self._on_reroll_error)
         self._reroll_worker.finished.connect(self._on_run_thread_finished)
@@ -1622,6 +1777,10 @@ class MainWindow(QMainWindow):
         if not self._config.get("output_dir", ""):
             self._append_log("No output folder selected.")
             return
+        problem = self._main_character_problem()
+        if problem:
+            self._append_log(problem)
+            return
 
         self._config.save()
         self._ensure_models(
@@ -1649,6 +1808,8 @@ class MainWindow(QMainWindow):
         )
         self._worker.progress.connect(lambda cur, _: self._progress.setValue(cur))
         self._worker.log.connect(self._append_log)
+        self._worker.image_done.connect(self._on_image_done)
+        self._worker.step.connect(self._on_step)
         self._worker.all_done.connect(self._on_done)
         self._worker.error.connect(self._on_error)
         self._worker.finished.connect(self._on_run_thread_finished)
@@ -1667,6 +1828,66 @@ class MainWindow(QMainWindow):
             self._worker.cancel()
         self._cancel_btn.setEnabled(False)
         # _on_done will fire from the worker after cancellation and refresh the grid
+
+    def _on_step(self, value: int, maximum: int):
+        """Sampler step of the current image: "Step 5 / 8"; (0, 0) = still
+        preparing (uploading, loading models, encoding)."""
+        if maximum <= 0:
+            self._step_bar.setMaximum(1)
+            self._step_bar.setValue(0)
+            self._step_bar.setFormat("Preparing…")
+        else:
+            self._step_bar.setMaximum(maximum)
+            self._step_bar.setValue(min(value, maximum))
+            self._step_bar.setFormat("Step %v / %m")
+
+    def _reset_step_bar(self):
+        self._step_bar.setMaximum(1)
+        self._step_bar.setValue(0)
+        self._step_bar.setFormat("")
+
+    def _on_image_done(self, stem: str, out_path: str):
+        """One image has just been saved. Show it now instead of when the whole
+        batch ends (or is cancelled): drop it from the grid (or tick it when
+        "Show all" is on), refresh the Remaining/Done counts, and put the result
+        in the Library."""
+        if stem not in self._processed_set:
+            self._processed_set.add(stem)
+            self._processed_count += 1
+        if self._show_all_chk.isChecked():
+            self._thumb_grid.mark_processed(stem)
+        else:
+            self._thumb_grid.remove_items_by_stems({stem})
+        self._img_count_lbl.setText(
+            f"Remaining: {self._thumb_grid.count()}  |  Done: {self._processed_count}")
+
+        self._last_lib_dir = ""   # opening the Library later reloads and includes this result
+        if self._stack.currentIndex() == 1 and not (self._lib_loader and self._lib_loader.isRunning()):
+            self._add_library_result(Path(out_path))
+
+    def _add_library_result(self, out_path: Path):
+        """Add one fresh result to the Library grid that is already on screen."""
+        try:
+            thumb_dir = out_path.parent / "thumbnails"
+            thumb_dir.mkdir(exist_ok=True)
+            thumb = thumb_dir / (out_path.stem + ".jpg")
+            pil = ImageOps.exif_transpose(Image.open(out_path)).convert("RGB")
+            pil.thumbnail((THUMB_SIZE, THUMB_SIZE), Image.LANCZOS)
+            pil.save(thumb, "JPEG", quality=85)
+            img = QImage(str(thumb))
+        except Exception:
+            return
+        if img.isNull():
+            return
+        for i in range(self._lib_grid.count() - 1, -1, -1):      # a re-run overwrote an existing file
+            key = self._lib_grid.item(i).data(Qt.ItemDataRole.UserRole)
+            if key and Path(key) == out_path:
+                self._lib_grid.takeItem(i)
+        self._lib_grid.add_item(img, str(out_path), out_path.name)
+        if self._lib_sort_combo.currentIndex() == 0:             # "Newest First": it belongs on top
+            self._lib_grid.insertItem(0, self._lib_grid.takeItem(self._lib_grid.count() - 1))
+        n = self._lib_grid.count()
+        self._lib_status_lbl.setText(f"{n} image{'s' if n != 1 else ''} — double-click to view")
 
     def _on_done(self):
         self._start_btn.setEnabled(True)
@@ -1750,6 +1971,7 @@ class MainWindow(QMainWindow):
         batch is already running."""
         if self._generation_running() or self._auto_mode:
             return
+        self._reset_step_bar()
         self._pod.run_finished()
         self._pod.start_idle_timer()
 
@@ -1832,5 +2054,6 @@ class MainWindow(QMainWindow):
             self._transfer.wait(5000)
         if stop_pod:
             self._pod.shutdown()
+        self._config.set("window_geometry", bytes(self.saveGeometry().toBase64()).decode("ascii"))
         self._config.save()
         super().closeEvent(event)
