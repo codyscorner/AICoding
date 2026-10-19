@@ -105,6 +105,7 @@ STYLESHEET = f"""
         color: {FG_DIM};
         border: 1px solid {BORDER};
         padding: 6px 12px;
+        font-weight: normal;
     }}
     QPushButton#browse_btn:hover {{ background-color: {BG_MED}; color: {FG}; }}
     QListWidget {{
@@ -610,9 +611,8 @@ class MainWindow(QMainWindow):
         self._root_edit = QLineEdit(self._settings.get("root_dir", ""))
         self._root_edit.setPlaceholderText("Select a root download folder...")
         self._root_edit.setReadOnly(True)
-        browse_btn = QPushButton("...")
+        browse_btn = QPushButton("Browse")
         browse_btn.setObjectName("browse_btn")
-        browse_btn.setFixedWidth(40)
         browse_btn.clicked.connect(self._browse_root)
         root_row.addWidget(root_lbl)
         root_row.addWidget(self._root_edit)
