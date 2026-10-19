@@ -96,6 +96,13 @@ class SettingsDialog(QDialog):
                                              "Folder shown on the Library tab (blank = the Output folder)…")
         self._archive_dir = self._folder_row(fl, "Archive:", config.get("archive_dir", ""),
                                              "Where archived videos are moved to (watch later in Desktop Video Browser)…")
+        self._per_workflow = QCheckBox("Save each workflow's videos in its own folder inside Output")
+        self._per_workflow.setToolTip(
+            "On: a run of Series 1/MiniMax_Foo.json saves to <Output>/Series 1/MiniMax_Foo/.\n"
+            "An image then only counts as done for the workflow that made its video, so the same "
+            "image stays available for other workflows.\nOff: every video goes straight into Output.")
+        self._per_workflow.setChecked(bool(config.get("output_per_workflow", True)))
+        fl.addWidget(self._per_workflow)
         folders_tab.addWidget(folders_group)
 
         # ── Staging ──────────────────────────────────────────────────────
@@ -244,9 +251,8 @@ class SettingsDialog(QDialog):
             b.setFixedWidth(40)
             b.clicked.connect(slot)
             btn_col.addWidget(b)
-        refresh_btn = QPushButton("↻")
+        refresh_btn = QPushButton("↻ Refresh")
         refresh_btn.setObjectName("small_btn")
-        refresh_btn.setFixedWidth(40)
         refresh_btn.setToolTip("Fetch the pod list from RunPod")
         refresh_btn.clicked.connect(self._refresh_pods)
         btn_col.addWidget(refresh_btn)
@@ -470,9 +476,8 @@ class SettingsDialog(QDialog):
         row.addWidget(self._label(label))
         edit = QLineEdit(value or "")
         edit.setPlaceholderText(placeholder)
-        btn = QPushButton("…")
+        btn = QPushButton("Browse")
         btn.setObjectName("small_btn")
-        btn.setFixedWidth(40)
         btn.clicked.connect(lambda: self._browse_folder(edit))
         row.addWidget(edit, stretch=1)
         row.addWidget(btn)
@@ -486,9 +491,8 @@ class SettingsDialog(QDialog):
         row.addWidget(self._label(label))
         edit = QLineEdit(value or "")
         edit.setPlaceholderText(placeholder)
-        btn = QPushButton("…")
+        btn = QPushButton("Browse")
         btn.setObjectName("small_btn")
-        btn.setFixedWidth(40)
         btn.clicked.connect(lambda: self._browse_file(edit, caption, filt))
         row.addWidget(edit, stretch=1)
         row.addWidget(btn)
@@ -828,6 +832,7 @@ class SettingsDialog(QDialog):
         c.set("output_dir", self._output_dir.text().strip())
         c.set("loras_dir", self._loras_dir.text().strip())
         c.set("library_dir", self._library_dir.text().strip())
+        c.set("output_per_workflow", bool(self._per_workflow.isChecked()))
         c.set("archive_dir", self._archive_dir.text().strip())
         c.set("staging_dir_local", self._staging_dir.text().strip())
         c.set("runpod_input_dir", self._runpod_input.text().strip())
