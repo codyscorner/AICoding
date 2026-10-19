@@ -9,6 +9,7 @@ Saves:
 
 import datetime
 import json
+import os
 import random
 import shutil
 import time
@@ -16,7 +17,7 @@ import urllib.request
 from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
-COMFY_URL     = "http://127.0.0.1:8000"
+COMFY_URL     = os.environ.get("COMFY_URL", "http://127.0.0.1:8000")
 COMFY_OUTPUT  = Path("P:/AI/ComfyLocal/ComfyUI_windows_portable/ComfyUI/output")
 OUTPUT_DIR    = Path(__file__).parent / "output"
 WORKFLOW_FILE = Path(__file__).parent / "qwen_T2Image_2512_API.json"
@@ -391,6 +392,17 @@ APPS = [
             "square icon, sharp edges, modern Windows app icon design, 512x512"
         ),
     },
+    {
+        "name": "TodoList",
+        "project_folder": "TodoList",
+        "prompt": (
+            "Minimalist flat app icon, deep navy blue background #0a1428, "
+            "a glowing royal blue #2f6fed checklist clipboard with two checked boxes in "
+            "bright green and one empty box, light sky-blue #7fb3ff accents, "
+            "representing a simple to-do list, clean vector style, no text, "
+            "square icon, sharp edges, modern Windows app icon design, 512x512"
+        ),
+    },
 ]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -511,7 +523,7 @@ def find_projects_missing_icon(projects_root: Path = PROJECTS_ROOT) -> list[str]
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 NEW_APPS = {
-    "PromptEnhancer",
+    "TodoList",
 }
 
 
@@ -535,6 +547,11 @@ def main() -> None:
         workflow["86:58"]["inputs"]["width"]      = 512
         workflow["86:58"]["inputs"]["height"]     = 512
         workflow["60"]["inputs"]["filename_prefix"] = f"icon_{name}"
+        # Local ComfyUI now ships Qwen-Image 2.1 instead of the 2512 files the
+        # workflow JSON names, so point the loaders at what is installed.
+        workflow["86:37"]["inputs"]["unet_name"]  = "qwen_image_2.1_int8_convrot.safetensors"
+        workflow["86:38"]["inputs"]["clip_name"]  = "qwen3vl_8b_int8_convrot.safetensors"
+        workflow["86:39"]["inputs"]["vae_name"]   = "qwen_image_2.1_vae_bf16.safetensors"
 
         # Submit
         prompt_id = submit_prompt(workflow)
