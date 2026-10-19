@@ -141,6 +141,9 @@ Every successful generation appends a row to `prompt_log.csv` in the output fold
 
 ## Changelog
 
+### v1.9.8
+- **Fix: Pin Style showed only the first 90 characters of each prompt**, so prompts that start with the same sentence were indistinguishable. Each row now shows the full prompt, wrapped to the list width, and the dialog opens larger (900x720)
+
 ### v1.9.7
 - **Fix: blank buttons in Settings.** The Browse buttons beside Output Folder, Workflow JSON, Prompts File, the Models folder and the alert sound, and the Prompts File *Edit* button, showed an empty purple square. The default button style pads 28 px on each side but these were forced to 36-52 px wide, leaving no room for any text. They are now labelled **Browse** / **Edit** with a minimum width, so they always fit
 - Bare-symbol buttons now say what they do: **▲ Up / ▼ Down / ↻ Refresh** (GPU and pod order lists), **⤢ Expand** (Scenario and Idea boxes) and **⟳ Refresh** (model list)
