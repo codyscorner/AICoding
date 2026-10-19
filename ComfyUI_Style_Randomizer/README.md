@@ -7,6 +7,7 @@ Batch-process a folder of images through a single ComfyUI i2i workflow, randomly
 - Load thousands of images from an input folder with fast thumbnail preview (cached on first load)
 - Maintain a prompt list of any size in a single `.txt` file — each prompt can span multiple lines
 - Randomly assigns one prompt per image on every run
+- **Main character** — pick one fixed photo (e.g. yourself) that is combined with every folder image: **stitched** side by side into one image (for one-image workflows like Flux2 Dev) or sent as a **separate second reference** (workflows with two Load Image nodes, like Qwen 2.1). One person placed in a different scene with a different partner every time
 - Supports **Local** and **RunPod** ComfyUI endpoints
 - Skip already-processed images (resume interrupted runs)
 - **Processed filter** — hides already-done images by default; toggle **Show all** to see them with a green ✓ badge; remaining/done count shown after load
@@ -68,9 +69,36 @@ Your ComfyUI workflow must be exported in **API format** (enable Dev Mode in Com
 
 | Node | What gets patched |
 |------|-------------------|
-| `LoadImage` | Injected with the current source image |
+| `LoadImage` (first) | Injected with the current folder image |
+| `LoadImage` (second, or one titled *Main Character*) | Injected with the **main character** photo, only when *Main character* is ticked; otherwise left as saved in the workflow |
 | `PrimitiveStringMultiline` or first non-negative `CLIPTextEncode` | Injected with the randomly chosen style prompt |
 | `KSampler` / any node with `seed` or `noise_seed` | Randomized each image |
+
+## Output Shape
+
+The **Shape** dropdown in the bottom bar sets the aspect ratio of the generated image: **Auto (follow image)**, **Portrait 2:3**, **Portrait 3:4**, **Square 1:1**, **Landscape 4:3** or **Landscape 3:2**. Switch it per run, so portraits and landscapes can both be made from the same setup.
+
+- **Auto** (default) leaves the workflow alone. Most workflows size the result from the input image, so a stitched side-by-side pair comes out wide.
+- A forced shape writes width/height straight into the workflow's latent node (`EmptyFlux2LatentImage`, `EmptyLatentImage` or `EmptySD3LatentImage`) and `Flux2Scheduler`, cutting the link to *Get Image Size*. The input - including a stitched pair - keeps its natural shape as the reference.
+- The pixel budget is the workflow's own `ImageScaleToTotalPixels` megapixels (else 1 MP). Sizes snap to multiples of 16, e.g. 2 MP: portrait 2:3 = 1152x1728, landscape 3:2 = 1728x1152, square = 1408x1408.
+- A workflow with no latent-size node ignores the setting and says so in the log. Qwen 2.1 takes its size from the input image, so use Auto there.
+- Applies to Start, Auto Run and Library re-roll.
+
+## Main Character
+
+Tick **Main character** under the Input Folder row, pick a photo, and choose how it reaches the workflow with the dropdown:
+
+| Mode | What the workflow receives | Use with |
+|------|----------------------------|----------|
+| **Stitched, main on left / right** (default: left) | ONE image per run: the main character photo and the folder image joined side by side, both scaled to the same height (max 1536 px), sent to the first `LoadImage` | One-image workflows - Flux2 Dev (`image_flux2.json`) |
+| **Separate 2nd reference** | The folder image in the first `LoadImage`, the main character in a second `LoadImage` (the one titled *Main Character*, else the second in the file) | Two-image workflows - Qwen 2.1 (`image_Qwen2_1_Batch.json`) |
+
+- **Prompts for stitched mode** should describe the two people by position, e.g. *"The man on the left and the woman on the right are standing together at the altar after their wedding..."*. The output's shape follows the stitched image (two portraits side by side give a wide image).
+- **Prompts for reference mode** refer to the images by number: *"The man from image 2 and the woman from image 1..."*.
+- Separate-reference mode with a one-`LoadImage` workflow refuses to start and says to pick a stitched mode.
+- The reference upload is named `main_character_<name>` and a stitched upload `<folder image>_stitched.png`, so neither can overwrite a folder image on the server. The saved output is still named after the folder image.
+- Applies to Start, Auto Run and Library re-roll alike. The tick, photo and mode are remembered in `csr_config.json`.
+- The Qwen 2.1 workflow is already set up for reference mode: *Folder Image (Randomizer)*, *Main Character (Randomizer)* and a *Style Prompt (Randomizer)* string node that feeds both the direct and the prompt-enhancer path.
 
 ## RunPod Pod Control
 
@@ -112,6 +140,38 @@ Double-click any thumbnail in the Randomizer grid to pin a specific style to tha
 Every successful generation appends a row to `prompt_log.csv` in the output folder: timestamp, output filename, prompt index, weight, note (e.g. `pinned`), and a preview of the prompt text used. Useful for auditing which prompt produced which output.
 
 ## Changelog
+
+### v1.9.8
+- **Fix: Pin Style showed only the first 90 characters of each prompt**, so prompts that start with the same sentence were indistinguishable. Each row now shows the full prompt, wrapped to the list width, and the dialog opens larger (900x720)
+
+### v1.9.7
+- **Fix: blank buttons in Settings.** The Browse buttons beside Output Folder, Workflow JSON, Prompts File, the Models folder and the alert sound, and the Prompts File *Edit* button, showed an empty purple square. The default button style pads 28 px on each side but these were forced to 36-52 px wide, leaving no room for any text. They are now labelled **Browse** / **Edit** with a minimum width, so they always fit
+- Bare-symbol buttons now say what they do: **▲ Up / ▼ Down / ↻ Refresh** (GPU and pod order lists), **⤢ Expand** (Scenario and Idea boxes) and **⟳ Refresh** (model list)
+
+### v1.9.6
+- **Fix: the model upload/download progress was wrong for any file over 2 GB.** The progress signal carried the byte counts through a 32-bit integer, so an 18.03 GB upload showed "-1911 MB of 855 MB" and a bar stuck near 99%. The counts now arrive intact: real "9.02 GB of 18.03 GB", a bar that matches, and a sensible MB/s and time left. The transfer itself was never affected - only the dialog
+
+### v1.9.5
+- **Scenario history** - every Generate click records the Scenario + Idea pair in `scene_history.json` next to the config/EXE (newest first, repeats move to the top with a use count, 300 kept). **📜 History** in Edit Prompts opens a browser with a word filter and full-text preview; *Use this* (or double-click) loads both boxes back; *Delete* removes an entry
+- **Remembered on reopen**: the Idea (previously lost every time) and Count, the Prompt editor's window size, the Order dropdown, the Auto Run batch size and the main window's size/position
+- **Edit Prompts: Scenario and Idea are now 4-line wrapped text boxes** (they were single-line fields that hid long descriptions) with a **⤢** button at the end of each that opens a large editor (OK keeps the changes, Cancel discards). Line breaks and repeated spaces are folded into single spaces when generating, so the prompts stay single paragraphs
+
+### v1.9.4
+- **Step progress bar** - a slim second bar under the file counter shows the sampler step of the image being generated ("Preparing…" while it uploads / loads models, then "Step 5 / 8"). Read live from ComfyUI's websocket (local or pod), with the old HTTP polling as fallback; also shown during a Library re-roll. `websocket-client` is now bundled in the EXE
+
+### v1.9.3
+- **Results show up as each image finishes** - the window used to refresh only when the whole batch ended or was cancelled, so a long run looked frozen. Now every finished image leaves the grid (or gets its green check with *Show all* on), *Remaining / Done* counts update, and the result appears in the Library (added live if the Library tab is open, otherwise on opening it). The worker gained an `image_done` signal for this
+
+### v1.9.2
+- **Output shape** dropdown (bottom bar): Auto / Portrait 2:3 / Portrait 3:4 / Square / Landscape 4:3 / Landscape 3:2. A forced shape sets the latent and scheduler size directly (multiples of 16, ratio exact, workflow's own megapixel budget) so a wide stitched input can still give a portrait result, and the other way round. Auto keeps the old behaviour
+
+### v1.9.1
+- **Stitched main character** — new dropdown on the Main character row: *Stitched, main on left / right* joins the main photo and each folder image into one image (via PIL, same height, white-flattened, EXIF-upright) and sends it to the first `LoadImage`, so one-image workflows such as Flux2 Dev work with a main character. *Separate 2nd reference* is the v1.9.0 behaviour. Default is stitched-left
+- Reference mode on a one-`LoadImage` workflow now tells you to pick a stitched mode
+
+### v1.9.0
+- **Main character** — fixed second reference image (checkbox + Browse + thumbnail under Input Folder); folder images rotate through the first `LoadImage`, the main character fills the second. Uploaded once per run under a `main_character_` name; clear errors for a missing photo or a one-image workflow; works for Start, Auto Run and re-roll
+- Workflow `image_Qwen2_1_Batch.json` prepared for it (new *Style Prompt* string node ahead of the enhancer's System Prompt, so the style text no longer lands in the system prompt)
 
 ### v1.8.1
 - Fix: Settings > RunPod showed empty GPU/pod lists (the list fetch was never started); lists and account balance now load when Settings opens
