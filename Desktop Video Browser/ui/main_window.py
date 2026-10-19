@@ -28,6 +28,7 @@ class MainWindow(QMainWindow):
 
         self.folder_tree_panel.folderSelected.connect(self._on_tree_folder_selected)
         self.file_list_panel.fileSelected.connect(self.video_player_panel.load_video)
+        self.file_list_panel.start_folder_provider = self.folder_tree_panel.highlighted_folder
         self.file_list_panel.folderOpened.connect(self._on_folder_opened)
         self.file_list_panel.sortModeChanged.connect(self._on_sort_mode_changed)
         self.file_list_panel.fileAboutToBeDeleted.connect(self._on_file_about_to_be_deleted)
