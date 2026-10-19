@@ -191,6 +191,8 @@ class BatchChainWorker(QThread):
         # (e.g. after cleaning out a folder) never collides with or gets
         # skipped by an earlier batch's video of the same name.
         self._run_stamp = time.strftime("%Y%m%d_%H%M%S")
+        # Final-video names already handed out in this run (see _stitch).
+        self._used_final_stems: set[str] = set()
         self._runpod = config.get("mode", "local") == "runpod"
         self._url = (
             config.get("runpod_url", "").rstrip("/")
@@ -416,6 +418,14 @@ class BatchChainWorker(QThread):
                 # which on the pod's Linux filesystem is arbitrary and swapped
                 # the segments between videos.
                 node["inputs"]["sort_method"] = LIST_LOADER_SORT
+                # Local mode re-uses the same staging folder (seg_N) every run.
+                # With load_always off, the loader's IS_CHANGED only hashes its
+                # input values (folder path, cap, sort) — not the folder's
+                # contents — so ComfyUI hands back the image list cached from
+                # the previous run and a 1-image batch after a 2-image one
+                # renders 2 videos. load_always makes IS_CHANGED return NaN,
+                # forcing a fresh read of the folder every time.
+                node["inputs"]["load_always"] = True
                 return
 
     def _check_batch_wiring(self, workflow: dict, json_file: str):
@@ -565,6 +575,14 @@ class BatchChainWorker(QThread):
             # A silent truncation here would stitch every image after the gap
             # to the wrong chain of videos — fail loudly instead.
             names = ", ".join(f["filename"] for f in all_files)
+            if len(all_files) > n:
+                raise RuntimeError(
+                    f"Segment {seg}: expected {n} output videos, ComfyUI returned "
+                    f"{len(all_files)} ({names}). More videos than images were "
+                    f"sent — the image loader most likely re-used a cached list "
+                    f"from an earlier run, or the workflow has an extra batch "
+                    f"node. Restart ComfyUI and try again."
+                )
             raise RuntimeError(
                 f"Segment {seg}: expected {n} output videos, ComfyUI returned "
                 f"{len(all_files)} ({names or 'none'}). One or more images "
@@ -736,7 +754,18 @@ class BatchChainWorker(QThread):
     def _stitch(self, videos: list[Path], img_name: str) -> tuple[Path, dict]:
         final_dir = Path(self._config.get("final_video_dir", self._config["output_base_dir"]))
         final_dir.mkdir(parents=True, exist_ok=True)
+        # The final name is built from the image's stem only, so "x_000001.jpg"
+        # and "x_000001.png" in one batch would share a name (and a zip) and the
+        # second video would silently overwrite the first. Fold the extension
+        # in on a collision, then a counter as a last resort.
         stem = Path(img_name).stem
+        if stem in self._used_final_stems:
+            stem = f"{stem}_{Path(img_name).suffix.lstrip('.').lower() or 'img'}"
+        base, k = stem, 2
+        while stem in self._used_final_stems:
+            stem = f"{base}_{k}"
+            k += 1
+        self._used_final_stems.add(stem)
         final_path = final_dir / f"{stem}_{self._run_stamp}.mp4"
         n = len(videos)
 
