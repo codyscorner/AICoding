@@ -2,9 +2,9 @@
 :: ─────────────────────────────────────────────────────────────────────────────
 :: build.bat — Build PhotoGallery with PyInstaller
 ::
-:: Uses the shared VideCoding venv (..\.venv). The spec file excludes the
+:: Uses the shared AICoding venv (..\.venv). The spec file excludes the
 :: venv's heavy ML packages so the build stays small.
-:: One-folder build: dist\PhotoGallery\  → mirrored to P:\Apps\VibeCoded\PhotoGallery\
+:: One-folder build: dist\PhotoGallery\  → mirrored to P:\Apps\AICoded\PhotoGallery\
 :: ─────────────────────────────────────────────────────────────────────────────
 cd /d "%~dp0"
 
@@ -27,8 +27,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [3/3] Deploying to P:\Apps\VibeCoded\PhotoGallery\ ...
-robocopy "dist\PhotoGallery" "P:\Apps\VibeCoded\PhotoGallery" /MIR /R:2 /W:2 /XF photo_gallery_config.json photo_gallery_ratings.json /NFL /NDL /NJH
+echo [3/3] Deploying to P:\Apps\AICoded\PhotoGallery\ ...
+robocopy "dist\PhotoGallery" "P:\Apps\AICoded\PhotoGallery" /MIR /R:2 /W:2 /XF photo_gallery_config.json photo_gallery_ratings.json /NFL /NDL /NJH
 if errorlevel 8 (
     echo.
     echo ERROR: deploy copy failed.
@@ -37,5 +37,5 @@ if errorlevel 8 (
 )
 
 echo.
-echo Done: P:\Apps\VibeCoded\PhotoGallery\PhotoGallery.exe
+echo Done: P:\Apps\AICoded\PhotoGallery\PhotoGallery.exe
 pause

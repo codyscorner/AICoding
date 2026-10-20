@@ -13,7 +13,7 @@ search, and play from.
 - **Persistence:** full — named playlists, last-session restore, `.m3u`
   import/export, remembered folder/volume/window via `QSettings`
 - **Theme:** dark-blue color scheme (dark UI, blue accents)
-- **Build output:** `P:\Apps\VibeCoded\Music Player\`
+- **Build output:** `P:\Apps\AICoded\Music Player\`
 
 ## UI layout (single window)
 ```

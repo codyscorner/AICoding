@@ -14,6 +14,7 @@ from lora_sync import (
     CFG_S3_PROFILE, CFG_S3_REGION, CFG_S3_ENDPOINT, CFG_S3_BUCKET,
     CFG_S3_LORAS_PREFIX, CFG_LORA_CHECK, S3_DEFAULTS, import_s3_browser_config,
 )
+from remote_cleanup import CFG_DELETE_AFTER, CFG_OUTPUT_PREFIX, DEFAULT_OUTPUT_PREFIX
 
 
 class SettingsDialog(QDialog):
@@ -199,9 +200,8 @@ class SettingsDialog(QDialog):
             b.setFixedWidth(40)
             b.clicked.connect(slot)
             btn_col.addWidget(b)
-        refresh_btn = QPushButton("↻")
+        refresh_btn = QPushButton("↻ Refresh")
         refresh_btn.setObjectName("small_btn")
-        refresh_btn.setFixedWidth(40)
         refresh_btn.setToolTip("Fetch the pod list from RunPod")
         refresh_btn.clicked.connect(self._refresh_pods)
         btn_col.addWidget(refresh_btn)
@@ -289,7 +289,7 @@ class SettingsDialog(QDialog):
         self._load_pod_order()
 
         # ── RunPod Volume (S3) — LoRA check / sync ───────────────────────
-        s3_group = QGroupBox("RunPod Volume (S3) — LoRA check && sync")
+        s3_group = QGroupBox("RunPod Volume (S3) — LoRA check && sync, result cleanup")
         s3_layout = QVBoxLayout(s3_group)
         s3_layout.setSpacing(10)
         self._lora_check_chk = QCheckBox(
@@ -320,6 +320,19 @@ class SettingsDialog(QDialog):
             s3_layout, "LoRA Prefix:",
             config.get(CFG_S3_LORAS_PREFIX, S3_DEFAULTS[CFG_S3_LORAS_PREFIX]),
             "Path of ComfyUI's models/loras folder inside the bucket (e.g. runpod-slim/ComfyUI/models/loras/)"
+        )
+        self._delete_after_chk = QCheckBox(
+            "Delete segment videos from the pod volume after download (size verified)")
+        self._delete_after_chk.setToolTip(
+            "ComfyUI keeps every finished video in its output folder on the volume, which is billed per GB. "
+            "Each RunPod result is deleted through the S3 connection only if the downloaded file's size "
+            "matches the one on the volume. A failed cleanup never fails the run.")
+        self._delete_after_chk.setChecked(bool(config.get(CFG_DELETE_AFTER, False)))
+        s3_layout.addWidget(self._delete_after_chk)
+        self._s3_output_prefix_edit, _ = self._text_row(
+            s3_layout, "Output Prefix:",
+            config.get(CFG_OUTPUT_PREFIX, DEFAULT_OUTPUT_PREFIX),
+            "Path of ComfyUI's output folder inside the bucket (e.g. runpod-slim/ComfyUI/output/)"
         )
         s3_btn_row = QHBoxLayout()
         s3_btn_row.addStretch()
@@ -420,8 +433,8 @@ class SettingsDialog(QDialog):
         row = QHBoxLayout()
         edit = QLineEdit(value or "")
         edit.setPlaceholderText(placeholder)
-        btn = QPushButton("...")
-        btn.setFixedWidth(40)
+        btn = QPushButton("Browse")
+        btn.setObjectName("small_btn")
         btn.setFixedHeight(30)
         btn.clicked.connect(lambda: self._browse_folder(edit))
         row.addWidget(self._label(label))
@@ -434,8 +447,8 @@ class SettingsDialog(QDialog):
         row = QHBoxLayout()
         edit = QLineEdit(value or "")
         edit.setPlaceholderText(placeholder)
-        btn = QPushButton("...")
-        btn.setFixedWidth(40)
+        btn = QPushButton("Browse")
+        btn.setObjectName("small_btn")
         btn.setFixedHeight(30)
         btn.clicked.connect(lambda: self._browse_file(edit))
         row.addWidget(self._label(label))
@@ -454,8 +467,8 @@ class SettingsDialog(QDialog):
         row = QHBoxLayout()
         edit = QLineEdit(value or "")
         edit.setPlaceholderText(placeholder)
-        btn = QPushButton("...")
-        btn.setFixedWidth(40)
+        btn = QPushButton("Browse")
+        btn.setObjectName("small_btn")
         btn.setFixedHeight(30)
         btn.clicked.connect(lambda: self._browse_audio(edit))
         row.addWidget(self._label(label))
@@ -740,6 +753,8 @@ class SettingsDialog(QDialog):
     def _save(self):
         self._config.set("mode", "local" if self._local_radio.isChecked() else "runpod")
         self._config.set(CFG_LORA_CHECK, self._lora_check_chk.isChecked())
+        self._config.set(CFG_DELETE_AFTER, self._delete_after_chk.isChecked())
+        self._config.set(CFG_OUTPUT_PREFIX, self._s3_output_prefix_edit.text().strip() or DEFAULT_OUTPUT_PREFIX)
         for key, value in self._s3_config_from_fields().items():
             self._config.set(key, value)
         self._config.set("comfyui_url", self._local_url_edit.text().strip())

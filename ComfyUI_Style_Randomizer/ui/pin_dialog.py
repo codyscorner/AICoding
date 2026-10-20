@@ -16,6 +16,7 @@ class PinPromptDialog(QDialog):
         self.chosen: str | None = current_pin  # None = no change, "" = clear pin
         self.setWindowTitle(f"Pin Style — {image_name}")
         self.setMinimumSize(520, 420)
+        self.resize(900, 720)
         self._build_ui(image_name, current_pin)
 
     def _build_ui(self, image_name: str, current_pin: str | None):
@@ -28,9 +29,16 @@ class PinPromptDialog(QDialog):
         layout.addWidget(hint)
 
         self._list = QListWidget()
+        # Show each prompt in full, wrapped to the list width. Many prompts share
+        # the same opening sentence, so a truncated preview can't tell them apart.
+        self._list.setWordWrap(True)
+        self._list.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self._list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self._list.setStyleSheet("QListWidget::item { padding: 6px 4px; }")
         for i, entry in enumerate(self._prompts):
-            preview = entry.text.replace("\n", " ")[:90]
-            label = f"{i+1}.  {preview}"
+            label = f"{i+1}.  {' '.join(entry.text.split())}"
             if entry.weight != 1.0:
                 label += f"   [{entry.weight:g}x]"
             item = QListWidgetItem(label)

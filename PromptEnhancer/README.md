@@ -27,7 +27,7 @@ Standalone desktop app that turns a rough idea into a structured, model-ready vi
 python build_exe.py
 ```
 
-Deploys to `P:\Apps\VibeCoded\Prompt Enhancer\`. `main_config.json` (API keys) sits next to the EXE and is never overwritten by a rebuild.
+Deploys to `P:\Apps\AICoded\Prompt Enhancer\`. `main_config.json` (API keys) sits next to the EXE and is never overwritten by a rebuild.
 
 ## Changelog
 

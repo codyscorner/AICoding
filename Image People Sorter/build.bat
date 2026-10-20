@@ -16,7 +16,7 @@ if errorlevel 1 (
 echo.
 echo Build complete. Copying to Apps folder...
 
-set "DEST=P:\Apps\VibeCoded\Image People Sorter"
+set "DEST=P:\Apps\AICoded\Image People Sorter"
 if not exist "%DEST%" mkdir "%DEST%"
 xcopy /E /Y /Q "dist\ImagePeopleSorter\*" "%DEST%\"
 

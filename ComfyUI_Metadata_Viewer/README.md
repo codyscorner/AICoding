@@ -64,7 +64,7 @@ A file queued through the API (Video Creator, scripts) usually carries only the 
 pyinstaller ComfyUI_Metadata_Viewer.spec
 ```
 
-Deploy `dist/ComfyUI_Metadata_Viewer.exe` to `P:\Apps\VibeCoded\ComfyUI Metadata Viewer\`.
+Deploy `dist/ComfyUI_Metadata_Viewer.exe` to `P:\Apps\AICoded\ComfyUI Metadata Viewer\`.
 
 ## Recent Changes
 

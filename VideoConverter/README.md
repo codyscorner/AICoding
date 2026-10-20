@@ -44,7 +44,7 @@ python main.py
 python build_exe.py
 ```
 
-Output: `dist\VideoConverter.exe`, copied to `P:\Apps\VibeCoded\Video Converter\`
+Output: `dist\VideoConverter.exe`, copied to `P:\Apps\AICoded\Video Converter\`
 
 ## Changelog
 

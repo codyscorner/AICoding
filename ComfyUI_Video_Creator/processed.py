@@ -1,16 +1,17 @@
-"""Which source files already have a finished video in the Library.
+"""Which source files already have a finished video in the Library — per workflow.
 
-A source counts as processed when a prompt-history entry records a result
-made from it (``sources`` per result file, or the entry-level ``source`` that
-pre-2.6.1 sidecars wrote) AND that result file is still sitting in one of the
-Library folder — so deleting a bad generation puts its source back in the
-picker. Names are compared case-insensitively, as Windows does.
+A source counts as processed for a workflow when that workflow's prompt-history
+entry records a result made from it (``sources`` per result file, or the
+entry-level ``source`` that pre-2.6.1 sidecars wrote) AND that result file is
+still sitting in the workflow's Library folder — so deleting a bad generation
+puts its source back in the picker. Names are compared case-insensitively, as
+Windows does.
 """
 
 import json
 from pathlib import Path
 
-from workflow_tools import HISTORY_SUFFIX
+from workflow_folders import history_file, library_dir_for, video_names
 
 # history file -> (mtime, {result name -> source name})
 _CACHE: dict[str, tuple[float, dict[str, str]]] = {}
@@ -42,29 +43,23 @@ def _result_sources(hist: Path) -> dict[str, str]:
     return pairs
 
 
-def library_file_names(folders: list[str]) -> set[str]:
-    names: set[str] = set()
-    for folder in folders:
-        if not (folder or "").strip():
-            continue
-        try:
-            names.update(p.name.lower() for p in Path(folder).iterdir() if p.is_file())
-        except OSError:
-            continue
-    return names
+def processed_sources(workflow_dir: str, library_root: str, workflow_rel: str) -> set[str]:
+    """Lower-cased file names of every source that ONE workflow has already
+    turned into a video that is still in the Library.
 
-
-def processed_sources(workflow_dir: str, library_folders: list[str]) -> set[str]:
-    """Lower-cased file names of every source that has a result in the Library."""
-    root = Path((workflow_dir or "").strip()) if (workflow_dir or "").strip() else None
-    if root is None or not root.is_dir():
+    Only that workflow's own history file counts, so an image finished by
+    workflow 1 stays visible while workflow 2 is selected, until workflow 2 has
+    made its own video from it. The video must sit in the workflow's own Library
+    folder, or loose in the Library root (how videos were saved before there
+    were per-workflow folders)."""
+    wf_dir = (workflow_dir or "").strip()
+    root = (library_root or "").strip()
+    if not (wf_dir and root and (workflow_rel or "").strip()):
         return set()
-    present = library_file_names(library_folders)
+    hist = history_file(wf_dir, workflow_rel)
+    if not hist.is_file():
+        return set()
+    present = video_names(library_dir_for(root, workflow_rel)) | video_names(root)
     if not present:
         return set()
-    done: set[str] = set()
-    for hist in root.rglob(f"*{HISTORY_SUFFIX}"):
-        for result, source in _result_sources(hist).items():
-            if result in present:
-                done.add(source)
-    return done
+    return {source for result, source in _result_sources(hist).items() if result in present}

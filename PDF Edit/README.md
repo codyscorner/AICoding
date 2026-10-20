@@ -45,11 +45,11 @@ python -m PyInstaller --noconfirm --noconsole --onefile --name "PDF Edit" `
     --icon app_icon.ico --add-data "app_icon.ico;." @ex main.py
 ```
 
-**The excludes are mandatory** — the shared VideCoding venv contains ML
+**The excludes are mandatory** — the shared AICoding venv contains ML
 packages (torch, tensorflow, …); without excludes the EXE balloons from
 ~56 MB to ~590 MB.
 
-EXE is copied to `P:\Apps\VibeCoded\PDF Edit\` after each build.
+EXE is copied to `P:\Apps\AICoded\PDF Edit\` after each build.
 Bump the patch version in `main.py` + this file + CHANGELOG before every build.
 
 ## Test material

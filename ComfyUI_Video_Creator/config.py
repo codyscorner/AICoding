@@ -45,6 +45,8 @@ class ConfigManager:
         "workflow_dir": "P:/AI/ComfyLocal/ComfyUI_windows_portable/Workflow_API",
         "output_dir": "",
         "library_dir": "",                     # blank = output_dir
+        "output_per_workflow": True,           # save each workflow's videos in <output>/<workflow path>/
+        "library_follow": True,                # Library tab shows the workflow selected on the active tab
         "archive_dir": "",                     # where the Library's Archive button moves videos to
         "library_sort": "Newest First",
         "loras_dir": "P:/AI/ComfyLocal/ComfyUI_windows_portable/ComfyUI/models/loras",
@@ -60,6 +62,10 @@ class ConfigManager:
         "s3_endpoint_url": "",
         "s3_bucket_name": "",
         "s3_models_prefix": "runpod-slim/ComfyUI/models/",
+        # remote_cleanup.py: after a RunPod result is downloaded and its size
+        # verified, delete it from the pod volume through S3. Off by default.
+        "s3_delete_outputs_after_download": False,
+        "s3_output_prefix": "runpod-slim/ComfyUI/output/",
         # Staging for workflows that read a whole folder (LoadImageListFromDir)
         "staging_dir_local": "",
         "runpod_input_dir": "/workspace/runpod-slim/ComfyUI/input",
@@ -77,6 +83,7 @@ class ConfigManager:
         "video_sort": "Newest First",
         "video_input_mode": "auto",            # auto | last_frame | upload_video
         "extend_stitch": True,
+        "extend_hide_clips": True,             # Extend list hides a short clip once its complete video exists
         "seed_mode": "random",                 # random | fixed
         "seed_value": 0,
         "prompt_font_size": 10,

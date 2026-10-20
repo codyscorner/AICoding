@@ -58,7 +58,7 @@ From the project folder, using the repo's `.venv` (it has PySide6 and PyInstalle
 ..\.venv\Scripts\pyinstaller.exe --noconfirm --clean FileRenameMover.spec
 ```
 
-The EXE lands in `dist\FileRenameMover.exe`. Bump `VERSION` in `main.py`, `CHANGELOG.md`, and this README before every build. Built EXEs are deployed to `P:\Apps\VibeCoded\File Rename Mover\`.
+The EXE lands in `dist\FileRenameMover.exe`. Bump `VERSION` in `main.py`, `CHANGELOG.md`, and this README before every build. Built EXEs are deployed to `P:\Apps\AICoded\File Rename Mover\`.
 
 ## Files next to the EXE
 

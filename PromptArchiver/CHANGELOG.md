@@ -2,12 +2,15 @@
 
 All notable changes to Prompt Archiver are documented here.
 
+## Unreleased
+- **Icon-only buttons now have a short text label.** Buttons that showed only a symbol (↻, …, 🎲, 🗑 and so on) now read e.g. "↻ Refresh" or "Browse" in regular-weight, regular-size text; their fixed widths were dropped so they size to their label. Covers: ⚙ Settings, ⋮ Actions and ✕ Remove.
+
 ## [2.0.0] — 2026-07-11
 
 ### Changed — full PyQt6 rewrite
 
 Complete rewrite from Electron + React + Material-UI to Python + PyQt6, matching
-the standard VibeCoded toolset (same stack as Music Player, AI Image Studio, etc.).
+the standard AICoded toolset (same stack as Music Player, AI Image Studio, etc.).
 
 - **Archive format unchanged** — existing `Prompt_Archive` folders load as-is;
   `metadata.json` keys are identical, so files written by v2 remain readable by v1.x

@@ -11,7 +11,7 @@
 - The end-of-transfer dialog now lists both skipped-identical and renamed files.
 
 ## v1.0.7 (2026-09-04)
-- `config.json` (profile/region/endpoint/bucket) now lives next to the EXE (`P:\Apps\VibeCoded\S3 Browser\config.json`; project root when run from source) instead of the hidden `%APPDATA%\S3Browser\` folder, so it is always easy to find. An existing AppData config is copied over automatically on first launch (the old file is left in place). Credentials stay in `~/.aws/credentials` as before.
+- `config.json` (profile/region/endpoint/bucket) now lives next to the EXE (`P:\Apps\AICoded\S3 Browser\config.json`; project root when run from source) instead of the hidden `%APPDATA%\S3Browser\` folder, so it is always easy to find. An existing AppData config is copied over automatically on first launch (the old file is left in place). Credentials stay in `~/.aws/credentials` as before.
 - Settings dialog now shows the full path of the settings file.
 
 ## v1.0.6 (2026-09-04)

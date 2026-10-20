@@ -84,10 +84,10 @@ AI_Image_Generator/
 Build with the repo `.venv` (it has boto3), using the spec (excludes torch/tf from the shared venv):
 
 ```bash
-P:\AI\VideCoding\.venv\Scripts\python.exe -m PyInstaller --noconfirm "AI Image Studio.spec"
+P:\AI\AICoding\.venv\Scripts\python.exe -m PyInstaller --noconfirm "AI Image Studio.spec"
 ```
 
-Deploy: copy `dist\AI Image Studio.exe` and `Comfy_Workflows\` to `P:\Apps\VibeCoded\AI Image Studio\`. Never overwrite the `settings.json`, `api_keys.json` or `generation_history.json` already there. EXE is ~130 MB.
+Deploy: copy `dist\AI Image Studio.exe` and `Comfy_Workflows\` to `P:\Apps\AICoded\AI Image Studio\`. Never overwrite the `settings.json`, `api_keys.json` or `generation_history.json` already there. EXE is ~130 MB.
 
 ## Changelog
 

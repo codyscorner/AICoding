@@ -21,7 +21,7 @@ Batch-converts images between JPG, PNG, WebP, BMP, and TIFF formats. Supersedes 
 - JPEG alpha-channel handling: RGBA/LA images composited onto white background
 - Cancel mid-batch
 - Progress bar and real-time file log with success/error coloring
-- Dark navy PyQt6 UI (same theme as other VibeCoded apps)
+- Dark navy PyQt6 UI (same theme as other AICoded apps)
 
 ## Requirements
 
@@ -42,7 +42,7 @@ python main.py
 pyinstaller ImageConverter.spec --clean --noconfirm
 ```
 
-Output: `dist/ImageConverter.exe`, deployed to `P:\Apps\VibeCoded\Image Converter\`.
+Output: `dist/ImageConverter.exe`, deployed to `P:\Apps\AICoded\Image Converter\`.
 
 ## Notes
 

@@ -2,9 +2,9 @@
 :: ─────────────────────────────────────────────────────────────────────────────
 :: build-app.bat — Build PromptArchiver.exe with PyInstaller
 ::
-:: Uses the shared VideCoding venv (..\\.venv). The spec file excludes the
+:: Uses the shared AICoding venv (..\\.venv). The spec file excludes the
 :: venv's heavy ML packages so the EXE stays small.
-:: Output: dist\PromptArchiver.exe  → copied to P:\Apps\VibeCoded\Prompt Archiver\
+:: Output: dist\PromptArchiver.exe  → copied to P:\Apps\AICoded\Prompt Archiver\
 :: ─────────────────────────────────────────────────────────────────────────────
 cd /d "%~dp0"
 
@@ -27,10 +27,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [3/3] Deploying to P:\Apps\VibeCoded\Prompt Archiver\ ...
-if not exist "P:\Apps\VibeCoded\Prompt Archiver" mkdir "P:\Apps\VibeCoded\Prompt Archiver"
-copy /Y "dist\PromptArchiver.exe" "P:\Apps\VibeCoded\Prompt Archiver\PromptArchiver.exe"
+echo [3/3] Deploying to P:\Apps\AICoded\Prompt Archiver\ ...
+if not exist "P:\Apps\AICoded\Prompt Archiver" mkdir "P:\Apps\AICoded\Prompt Archiver"
+copy /Y "dist\PromptArchiver.exe" "P:\Apps\AICoded\Prompt Archiver\PromptArchiver.exe"
 
 echo.
-echo Done: P:\Apps\VibeCoded\Prompt Archiver\PromptArchiver.exe
+echo Done: P:\Apps\AICoded\Prompt Archiver\PromptArchiver.exe
 pause

@@ -1,8 +1,8 @@
 @echo off
 :: build_stopwatch.bat
-:: Builds StopWatch.exe with PyInstaller and deploys to P:\Apps\VibeCoded\StopWatch
+:: Builds StopWatch.exe with PyInstaller and deploys to P:\Apps\AICoded\StopWatch
 
-set DEST=P:\Apps\VibeCoded\StopWatch
+set DEST=P:\Apps\AICoded\StopWatch
 set SHORTCUT_DIR=C:\Users\cody\OneDrive\Desktop\Vibe Coded Apps
 
 :: Switch to the folder containing this bat file

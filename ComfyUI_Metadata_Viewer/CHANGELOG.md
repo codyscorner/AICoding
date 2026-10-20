@@ -1,7 +1,7 @@
 # Changelog
 
 ## v1.4.0 — 2026-09-19
-- **Renamed to ComfyUI Metadata Viewer** (was VHS Metadata Parser). The folder is now `ComfyUI_Metadata_Viewer/`, the script `comfyui_metadata_viewer.py`, the spec and EXE `ComfyUI_Metadata_Viewer`, and the deploy folder `P:\Apps\VibeCoded\ComfyUI Metadata Viewer\`. The old deploy folder is left in place for the user to delete. The IconMaker entry now points at the new folder.
+- **Renamed to ComfyUI Metadata Viewer** (was VHS Metadata Parser). The folder is now `ComfyUI_Metadata_Viewer/`, the script `comfyui_metadata_viewer.py`, the spec and EXE `ComfyUI_Metadata_Viewer`, and the deploy folder `P:\Apps\AICoded\ComfyUI Metadata Viewer\`. The old deploy folder is left in place for the user to delete. The IconMaker entry now points at the new folder.
 - **Reads metadata from any ComfyUI output, not just MP4.** The user wanted to check a Flux.2 PNG's seed without dragging it into ComfyUI (Windows Properties doesn't show PNG text chunks).
   - **PNG:** `tEXt`, `iTXt` and compressed `zTXt` chunks are parsed properly.
   - **WebP / JPEG:** EXIF `prompt:{…}` / `workflow:{…}` tags, as written by `SaveAnimatedWEBP`.

@@ -130,4 +130,4 @@ build abort with `Failed to import module __PyInstaller_hooks_0_workflow`.
 ## App Name
 
 **ComfyUI Workflow Editor**
-EXE target: `P:\Apps\VibeCoded\ComfyUI Workflow Editor\`
+EXE target: `P:\Apps\AICoded\ComfyUI Workflow Editor\`

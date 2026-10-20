@@ -113,6 +113,8 @@ class DarkRedTheme(Theme):
             QPushButton[cssClass="browse"] {{
                 padding: 5px 10px;
                 min-width: 30px;
+                font-weight: normal;
+                font-size: 10pt;
             }}
 
             /* Combo Box */

@@ -1,4 +1,4 @@
-# VibeCoding — Daily Progress Tracker
+# AI Coding — Daily Progress Tracker
 
 ---
 

@@ -96,6 +96,13 @@ class SettingsDialog(QDialog):
                                              "Folder shown on the Library tab (blank = the Output folder)…")
         self._archive_dir = self._folder_row(fl, "Archive:", config.get("archive_dir", ""),
                                              "Where archived videos are moved to (watch later in Desktop Video Browser)…")
+        self._per_workflow = QCheckBox("Save each workflow's videos in its own folder inside Output")
+        self._per_workflow.setToolTip(
+            "On: a run of Series 1/MiniMax_Foo.json saves to <Output>/Series 1/MiniMax_Foo/.\n"
+            "An image then only counts as done for the workflow that made its video, so the same "
+            "image stays available for other workflows.\nOff: every video goes straight into Output.")
+        self._per_workflow.setChecked(bool(config.get("output_per_workflow", True)))
+        fl.addWidget(self._per_workflow)
         folders_tab.addWidget(folders_group)
 
         # ── Staging ──────────────────────────────────────────────────────
@@ -244,9 +251,8 @@ class SettingsDialog(QDialog):
             b.setFixedWidth(40)
             b.clicked.connect(slot)
             btn_col.addWidget(b)
-        refresh_btn = QPushButton("↻")
+        refresh_btn = QPushButton("↻ Refresh")
         refresh_btn.setObjectName("small_btn")
-        refresh_btn.setFixedWidth(40)
         refresh_btn.setToolTip("Fetch the pod list from RunPod")
         refresh_btn.clicked.connect(self._refresh_pods)
         btn_col.addWidget(refresh_btn)
@@ -401,6 +407,24 @@ class SettingsDialog(QDialog):
         syl.addWidget(self._s3_status)
         models_tab.addWidget(sync_group)
 
+        # ── Pod volume cleanup (delete results after download) ────────────
+        import remote_cleanup as rc
+        clean_group = QGroupBox("Pod volume cleanup — results")
+        cll = QVBoxLayout(clean_group)
+        cll.setSpacing(10)
+        cll.addWidget(self._caption(
+            "ComfyUI keeps every finished video in its output folder on the pod's volume, which is billed "
+            "per GB. With this ticked, each RunPod result is deleted from the volume (through the S3 "
+            "connection above) right after it has been downloaded — and only if the downloaded file's "
+            "size matches the one on the volume. A failed cleanup never fails the run."))
+        self._delete_after = QCheckBox("Delete results from the pod volume after they are downloaded")
+        self._delete_after.setChecked(bool(config.get(rc.CFG_DELETE_AFTER, False)))
+        cll.addWidget(self._delete_after)
+        self._output_prefix = self._text_row(
+            cll, "Output prefix:", config.get(rc.CFG_OUTPUT_PREFIX, rc.DEFAULT_OUTPUT_PREFIX),
+            "Path of ComfyUI's output folder inside the bucket (e.g. runpod-slim/ComfyUI/output/)")
+        models_tab.addWidget(clean_group)
+
         for lay in (server_tab, folders_tab, runpod_tab, prompt_tab, models_tab):
             lay.addStretch()
 
@@ -452,9 +476,8 @@ class SettingsDialog(QDialog):
         row.addWidget(self._label(label))
         edit = QLineEdit(value or "")
         edit.setPlaceholderText(placeholder)
-        btn = QPushButton("…")
+        btn = QPushButton("Browse")
         btn.setObjectName("small_btn")
-        btn.setFixedWidth(40)
         btn.clicked.connect(lambda: self._browse_folder(edit))
         row.addWidget(edit, stretch=1)
         row.addWidget(btn)
@@ -468,9 +491,8 @@ class SettingsDialog(QDialog):
         row.addWidget(self._label(label))
         edit = QLineEdit(value or "")
         edit.setPlaceholderText(placeholder)
-        btn = QPushButton("…")
+        btn = QPushButton("Browse")
         btn.setObjectName("small_btn")
-        btn.setFixedWidth(40)
         btn.clicked.connect(lambda: self._browse_file(edit, caption, filt))
         row.addWidget(edit, stretch=1)
         row.addWidget(btn)
@@ -810,6 +832,7 @@ class SettingsDialog(QDialog):
         c.set("output_dir", self._output_dir.text().strip())
         c.set("loras_dir", self._loras_dir.text().strip())
         c.set("library_dir", self._library_dir.text().strip())
+        c.set("output_per_workflow", bool(self._per_workflow.isChecked()))
         c.set("archive_dir", self._archive_dir.text().strip())
         c.set("staging_dir_local", self._staging_dir.text().strip())
         c.set("runpod_input_dir", self._runpod_input.text().strip())
@@ -833,6 +856,9 @@ class SettingsDialog(QDialog):
         c.set(ms.CFG_MODEL_CHECK, bool(self._sync_enabled.isChecked()))
         c.set(ms.CFG_DOWNLOAD, bool(self._sync_download.isChecked()))
         c.set(ms.CFG_MODELS_DIR, self._models_dir.text().strip())
+        import remote_cleanup as rc
+        c.set(rc.CFG_DELETE_AFTER, bool(self._delete_after.isChecked()))
+        c.set(rc.CFG_OUTPUT_PREFIX, self._output_prefix.text().strip() or rc.DEFAULT_OUTPUT_PREFIX)
         for key, value in self._s3_config_from_fields().items():
             c.set(key, value)
         c.save()

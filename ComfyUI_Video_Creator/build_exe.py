@@ -1,5 +1,5 @@
 """Build ComfyUI_Video_Creator.exe with PyInstaller and deploy it to
-P:\\Apps\\VibeCoded\\ComfyUI Video Creator.
+P:\\Apps\\AICoded\\ComfyUI Video Creator.
 
 Run with the repo .venv (build.bat does this automatically) — it has PyQt6,
 requests, websocket-client and Pillow. The shared venv also carries heavy
@@ -18,9 +18,9 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 DIST = ROOT / "dist"
 APP_NAME = "ComfyUI_Video_Creator"
-OUTPUT = Path(r"P:\Apps\VibeCoded\ComfyUI Video Creator")
+OUTPUT = Path(r"P:\Apps\AICoded\ComfyUI Video Creator")
 FFMPEG_SOURCES = [
-    Path(r"P:\Apps\VibeCoded\ComfyUI Chain Automator\ffmpeg.exe"),
+    Path(r"P:\Apps\AICoded\ComfyUI Chain Automator\ffmpeg.exe"),
 ]
 
 EXCLUDES = [
@@ -113,7 +113,7 @@ def main():
         else:
             print("WARNING: no ffmpeg.exe found to ship — set FFmpeg path in Settings or drop ffmpeg.exe next to the EXE")
 
-    sync = Path(r"P:\Apps\VibeCoded\Sync-StartMenuShortcuts.ps1")
+    sync = Path(r"P:\Apps\AICoded\Sync-StartMenuShortcuts.ps1")
     if sync.exists():
         subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(sync)],
                        capture_output=True, text=True)

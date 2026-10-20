@@ -2,7 +2,7 @@
 
 **Version:** 1.0.0
 **Stack:** PyQt6 (UI + Qt Multimedia audio), PyInstaller for packaging
-**Build output:** `P:\Apps\VibeCoded\Music Player\`
+**Build output:** `P:\Apps\AICoded\Music Player\`
 
 ## What it is
 A desktop music player: point it at a folder, scan for audio files (optionally
@@ -50,8 +50,8 @@ MusicPlayer/
 **v1.0.0 — feature complete and shipped.** All 6 phases done, plus Library root,
 named playlists, drag-to-playlist, removal rules, missing-file cleanup, app icon,
 export-to-folder (+.m3u), keyboard shortcuts, and Explorer drag-in. Built with
-PyInstaller and deployed to `P:\Apps\VibeCoded\Music Player\`.
+PyInstaller and deployed to `P:\Apps\AICoded\Music Player\`.
 
 Build: `python -m PyInstaller --noconfirm --clean --windowed --name "Music Player"
 --icon assets/icon.ico --add-data "assets;assets" main.py`, then robocopy
-`dist\Music Player` → `P:\Apps\VibeCoded\Music Player`.
+`dist\Music Player` → `P:\Apps\AICoded\Music Player`.

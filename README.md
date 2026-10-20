@@ -1,8 +1,8 @@
-# VibeCoding
+# AI Coding
 
 **Author:** [Cody's Corner](https://github.com/codyscorner) — [@codyscorner](https://github.com/codyscorner)
 
-This is my personal lab. It's a monorepo of small desktop utilities, AI-pipeline tools, and the occasional game, built by vibe coding with Claude Code: an idea pops into my head, I describe it, we build it, I use it, and it grows from there.
+This is my personal lab. It's a monorepo of small desktop utilities, AI-pipeline tools, and the occasional game, built by AI coding with Claude Code: an idea pops into my head, I describe it, we build it, I use it, and it grows from there.
 
 Nothing here is a product. Each folder is an experiment that solved a real itch on my own machines: moving and renaming batches of files, driving ComfyUI workflows, poking at S3 buckets, pulling metadata out of videos, and whatever else came up that week. Some projects are polished and get used daily; some were one-afternoon curiosities that stopped where the curiosity did. Both kinds stay here on purpose, because the point of the repo is to keep the experiments, the history, and the lessons in one place.
 
@@ -21,7 +21,7 @@ Every project lives in its own top-level folder and stands alone. Open a folder 
 - `CHANGELOG.md` — per-version change log
 - A PyInstaller `.spec` for projects that build to an EXE
 
-Built EXEs are deployed outside the repo to `P:\Apps\VibeCoded\<App Name>\`.
+Built EXEs are deployed outside the repo to `P:\Apps\AICoded\<App Name>\`.
 
 ## Running things
 

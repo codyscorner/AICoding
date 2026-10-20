@@ -37,7 +37,7 @@ A desktop application for storing, organizing, and viewing AI prompts alongside 
 
 ### Prerequisites
 - Python 3.11+ with PyQt6 (`pip install -r requirements.txt`), or use the shared
-  VideCoding venv at `..\.venv`
+  AICoding venv at `..\.venv`
 
 ### Running from source
 ```bash
@@ -46,7 +46,7 @@ run.bat          # or: python main.py
 
 ### Building the EXE
 ```bash
-build-app.bat    # PyInstaller one-file build → deploys to P:\Apps\VibeCoded\Prompt Archiver\
+build-app.bat    # PyInstaller one-file build → deploys to P:\Apps\AICoded\Prompt Archiver\
 ```
 
 ## Usage
@@ -162,7 +162,7 @@ Each prompt folder contains:
 ## Technical Details
 
 ### Built With
-- **Python 3 + PyQt6**: Native desktop UI (dark-blue VibeCoded theme)
+- **Python 3 + PyQt6**: Native desktop UI (dark-blue AICoded theme)
 - **PyQt6 QtMultimedia**: In-app video playback (FFmpeg backend)
 - **PyInstaller**: Single-file EXE packaging
 
@@ -182,7 +182,7 @@ Each prompt folder contains:
 - ✅ **Full PyQt6 rewrite** - Electron/React replaced with the standard Python + PyQt6 toolset
 - ✅ **Same archive format** - existing archives load unchanged; v1.x can still read v2 metadata
 - ✅ **Automatic settings migration** - archive path picked up from the old electron-store config
-- ✅ **Dark-blue theme** - consistent with the other VibeCoded apps
+- ✅ **Dark-blue theme** - consistent with the other AICoded apps
 - ✅ **Recovers hidden prompts** - folders missing prompt.txt now load instead of being skipped
 - ✅ Feature parity: multi-file support, clone, add/replace file modes, star ratings,
   AI model tracking, negative prompts, drag-and-drop (now also in dev mode)

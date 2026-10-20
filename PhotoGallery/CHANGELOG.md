@@ -23,7 +23,7 @@ Major release — filename/similarity search plus copy-only editing (original fi
 
 ### Fixed
 - Window/taskbar icon missing in the built EXE: bundled `app_icon.ico` is unpacked to `_internal` by PyInstaller 6, but the app looked next to the EXE. Resources now load from the correct folder (config/ratings still live next to the EXE).
-- `build.bat` now uses the shared venv and deploys the build to `P:\Apps\VibeCoded\PhotoGallery\` (robocopy mirror, preserving config/ratings) like the other apps.
+- `build.bat` now uses the shared venv and deploys the build to `P:\Apps\AICoded\PhotoGallery\` (robocopy mirror, preserving config/ratings) like the other apps.
 
 ## v1.3.0 — 2026-07-19
 

@@ -1,14 +1,14 @@
 @echo off
 REM Build ComfyUI Metadata Viewer with PyInstaller (one-file EXE) and deploy it to
-REM P:\Apps\VibeCoded\ComfyUI Metadata Viewer\
+REM P:\Apps\AICoded\ComfyUI Metadata Viewer\
 REM
-REM Uses the shared VideCoding venv (..\.venv). The spec file excludes the venv's heavy
+REM Uses the shared AICoding venv (..\.venv). The spec file excludes the venv's heavy
 REM ML packages so the EXE stays small. Bump the version in comfyui_metadata_viewer.py
 REM (and CHANGELOG.md) before building.
 cd /d "%~dp0"
 
 set "VENV_PY=%~dp0..\.venv\Scripts\python.exe"
-set "DEPLOY=P:\Apps\VibeCoded\ComfyUI Metadata Viewer"
+set "DEPLOY=P:\Apps\AICoded\ComfyUI Metadata Viewer"
 
 if not exist "%VENV_PY%" (
     echo ERROR: shared venv not found at %VENV_PY%

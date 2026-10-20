@@ -17,6 +17,8 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from comfy_client import ComfyClient
 from media_tools import concat_videos, extract_last_frame, probe, resolve_ffmpeg
+from remote_cleanup import OutputCleaner, enabled as cleanup_enabled
+from workflow_folders import library_dir_for, workflow_rel_of
 from workflow_tools import (
     ValueField, analyze, apply_inputs, apply_megapixels, apply_output_format, apply_seed,
     apply_steps, apply_turbo_toggle, apply_value, list_workflows, load_workflow, match_format_value, output_formats,
@@ -410,10 +412,14 @@ class RunWorker(QThread):
             )
         out_dir = req.output_dir_override or Path(
             (self._cfg.get("output_dir", "") or "").strip() or (self._base_dir / "output"))
+        if req.output_dir_override is None and self._cfg.get("output_per_workflow", True):
+            # Each workflow keeps its videos in its own Library folder
+            out_dir = library_dir_for(out_dir, workflow_rel_of(req.workflow_path, self._cfg.get("workflow_dir", "")))
         out_dir.mkdir(parents=True, exist_ok=True)
         stem = self._output_stem(req)
         label = _safe(req.workflow_label)
         results: list[Path] = []
+        cleaner = OutputCleaner(self._cfg, self._log) if self._runpod and cleanup_enabled(self._cfg) else None
         for idx, f in enumerate(files, 1):
             ext = Path(f["filename"]).suffix or ".mp4"
             suffix = f"_{idx}" if len(files) > 1 else ""
@@ -423,6 +429,8 @@ class RunWorker(QThread):
             self._client.download(f, dest)
             results.append(dest)
             self._log(f"Saved {dest.name} ({dest.stat().st_size // 1024} KB)")
+            if cleaner:
+                cleaner.delete_if_downloaded(f, dest)
         return results
 
     def _output_stem(self, req: RunRequest) -> str:

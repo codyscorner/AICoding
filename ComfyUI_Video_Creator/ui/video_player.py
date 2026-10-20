@@ -66,8 +66,8 @@ class VideoPlayerDialog(QDialog):
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowCloseButtonHint)
         self.setStyleSheet(f"""
             QDialog, QWidget {{ background-color: #000000; color: {COLORS['fg_primary']}; font-family: "Segoe UI"; }}
-            QPushButton {{ background-color: {COLORS['accent']}; color: white; font-weight: bold; border: none;
-                           border-radius: 4px; padding: 6px 16px; font-size: 10pt; }}
+            QPushButton {{ background-color: {COLORS['accent']}; color: white; font-weight: normal; border: none;
+                           border-radius: 4px; padding: 5px 10px; font-size: 10pt; }}
             QPushButton:hover {{ background-color: {COLORS['accent_hover']}; }}
             QPushButton:disabled {{ background-color: {COLORS['bg_light']}; color: {COLORS['fg_dim']}; }}
             QSlider::groove:horizontal {{ background: {COLORS['bg_light']}; height: 4px; border-radius: 2px; }}
@@ -96,24 +96,21 @@ class VideoPlayerDialog(QDialog):
         bar.setContentsMargins(10, 6, 10, 6)
         bar.setSpacing(8)
 
-        self._play_btn = QPushButton("⏸")
-        self._play_btn.setFixedWidth(42)
+        self._play_btn = QPushButton("⏸ Pause")
+        # Text flips Pause/Play at runtime; hold the longer width so the bar doesn't jump.
+        self._play_btn.setMinimumWidth(self._play_btn.fontMetrics().horizontalAdvance("⏸ Pause") + 28)
         self._play_btn.clicked.connect(self._toggle_play)
         bar.addWidget(self._play_btn)
-        stop_btn = QPushButton("■")
-        stop_btn.setFixedWidth(42)
+        stop_btn = QPushButton("■ Stop")
         stop_btn.clicked.connect(lambda: self._player.stop())
         bar.addWidget(stop_btn)
-        fs_btn = QPushButton("⛶")
-        fs_btn.setFixedWidth(42)
+        fs_btn = QPushButton("⛶ Full screen")
         fs_btn.clicked.connect(self._toggle_fullscreen)
         bar.addWidget(fs_btn)
-        self._prev_btn = QPushButton("⏮")
-        self._prev_btn.setFixedWidth(42)
+        self._prev_btn = QPushButton("⏮ Prev")
         self._prev_btn.clicked.connect(self._prev)
         bar.addWidget(self._prev_btn)
-        self._next_btn = QPushButton("⏭")
-        self._next_btn.setFixedWidth(42)
+        self._next_btn = QPushButton("⏭ Next")
         self._next_btn.clicked.connect(self._next)
         bar.addWidget(self._next_btn)
         if len(self._playlist) <= 1:
@@ -249,7 +246,7 @@ class VideoPlayerDialog(QDialog):
         self._video_widget.setFullScreen(not self._video_widget.isFullScreen())
 
     def _on_state(self, state):
-        self._play_btn.setText("⏸" if state == QMediaPlayer.PlaybackState.PlayingState else "▶")
+        self._play_btn.setText("⏸ Pause" if state == QMediaPlayer.PlaybackState.PlayingState else "▶ Play")
 
     def _on_position(self, ms: int):
         self._seek.setValue(ms)

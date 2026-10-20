@@ -1,7 +1,7 @@
 @echo off
 :: build.bat
 :: Builds ComfyUI_Video_Creator.exe with PyInstaller and deploys it to
-:: P:\Apps\VibeCoded\ComfyUI Video Creator (retries if the EXE there is in use).
+:: P:\Apps\AICoded\ComfyUI Video Creator (retries if the EXE there is in use).
 ::
 :: Always builds with the repo .venv when it exists (PyQt6, requests,
 :: websocket-client, Pillow, PyInstaller all live there).

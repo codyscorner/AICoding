@@ -3,7 +3,7 @@
 A desktop PDF editor for markup (annotations) and page rearrangement.
 
 ## Stack
-- **PyQt6** — UI framework (consistent with other VideCoding apps)
+- **PyQt6** — UI framework (consistent with other AICoding apps)
 - **PyMuPDF (fitz)** — PDF rendering, page manipulation, and annotation writing
 - **PyInstaller** — packaging to EXE
 
@@ -38,7 +38,7 @@ A desktop PDF editor for markup (annotations) and page rearrangement.
   - Continuous multi-page scroll: **deferred** (large viewer refactor; single-page view + thumbnail navigation covers the markup workflow)
 - Export annotated PDF (flatten vs. keep editable annotations)
 - Basic redaction (black-box permanent removal) — PyMuPDF makes true redaction cheap via `add_redact_annot` + `apply_redactions` (strips underlying content, not just draws over it)
-- Icon, versioning, EXE build to `P:\Apps\VibeCoded\PDF Edit\` following usual project conventions
+- Icon, versioning, EXE build to `P:\Apps\AICoded\PDF Edit\` following usual project conventions
 
 ## Technical Risks
 1. **Coordinate mapping** between the rendered pixmap and PDF page space — zoom, page rotation, and PDF's coordinate system all interact. Every drawing tool depends on getting this right once; centralize it in a single transform helper.
@@ -67,5 +67,5 @@ A desktop PDF editor for markup (annotations) and page rearrangement.
 ## Resolved Questions
 1. **Annotations stay editable** as real PDF annotation objects by default; flatten offered as an export option (PyMuPDF supports both).
 2. **Large/scanned PDF performance** — handled by async/lazy rendering plus a hard 200-page-per-PDF cap (see Technical Risks #3).
-3. **Standalone app**, consistent with the other VideCoding projects.
+3. **Standalone app**, consistent with the other AICoding projects.
 4. **UI theme: dark green color scheme** across the app.

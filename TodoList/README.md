@@ -1,16 +1,16 @@
 # TodoList
 
-A simple desktop todo list with a dark aqua-purple theme, built with Python and PyQt6.
+A simple desktop todo list with a navy-blue dark theme, built with Python and PyQt6.
 
 ## Features
 
 - **Add tasks** — type and press Enter (or click Add), with Low / Medium / High priority
-- **Toggle complete** — click the checkbox on a task row
-- **Edit a task** — pencil button opens an inline text editor
-- **Delete a task** — X button on the row
-- **Clear Completed** — removes all finished tasks (with a confirm dialog)
-- **Progress counter** — shows "N of M completed" up top, plus an "All done" state
-- **Persistence** — tasks save to `todos.json` next to the script/EXE, so your list survives restarts
+- **Complete with a closing comment** — click the checkbox; an optional comment dialog appears (Ctrl+Enter to confirm, Cancel keeps the task open)
+- **Edit a task** — pencil button opens a text editor
+- **History, nothing lost** — "Clear Completed" and the ✕ button move tasks to the History view instead of deleting them; restore with ↩ or remove for good with "Delete forever"
+- **Progress counter** — "N of M completed", plus an "All done" state
+- **Resizable** — task text wraps and expands with the window; long lists scroll
+- **Persistence** — tasks save to `todos.json` next to the script/EXE (atomic writes; a corrupt file is backed up, not overwritten)
 - Newest tasks appear at the top of the list
 
 ## Requirements
@@ -44,5 +44,7 @@ Produces `TodoList.exe`, deploys it to `P:\Apps\VibeCoded\TodoList\`, and update
 
 ## Recent Changes
 
-- **v1.0.1** — App icon on the taskbar, title bar, dialogs, EXE and desktop shortcut. Full history in [CHANGELOG.md](CHANGELOG.md).
+- **v1.1.1** — Navy-blue app icon to match the theme.
+- **v1.1.0** — Navy blue theme (the default palette for new apps), text no longer in dark boxes and expands with the window, frameless checkbox, optional closing comment on completion, History view (nothing is ever deleted by accident), scrolling list, atomic saves. See [CHANGELOG.md](CHANGELOG.md).
+- **v1.0.1** — App icon on the taskbar, title bar, dialogs, EXE and desktop shortcut.
 - **v1.0.0** — Initial release.

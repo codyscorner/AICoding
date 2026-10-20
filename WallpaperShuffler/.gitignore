@@ -1,0 +1,32 @@
+## Build results
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+publish/
+
+## User-specific files
+.vs/
+.vscode/
+*.user
+*.suo
+
+## Test results
+TestResults/
+*.trx
+
+## IDE
+.idea/
+*.swp
+*.swo
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Project-specific
+state.json
+config.json
+error.log
+.claude/

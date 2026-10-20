@@ -117,6 +117,7 @@ class RunPanel(QWidget):
     show_queue_requested = pyqtSignal()
     play_requested = pyqtSignal(str)
     workflows_changed = pyqtSignal()        # a workflow file was added — other tabs rescan
+    workflow_selected = pyqtSignal(str)     # the selected workflow changed (path relative to the Workflows folder)
     loras_changed = pyqtSignal(str, str)    # the shared LoRA list was reloaded (folder info, server info)
 
     def __init__(self, kind: str, config: ConfigManager, parent=None):
@@ -178,9 +179,8 @@ class RunPanel(QWidget):
             "any workflow containing what you type stays in the list, wherever the match falls.")
         self._wf_combo.currentIndexChanged.connect(self._on_workflow_changed)
         row.addWidget(self._wf_combo, stretch=1)
-        refresh = QPushButton("↻")
+        refresh = QPushButton("↻ Refresh")
         refresh.setObjectName("small_btn")
-        refresh.setFixedWidth(36)
         refresh.setToolTip("Rescan the workflow folder — on every tab (F5 refreshes every list)")
         refresh.clicked.connect(self.rescan_workflows)
         row.addWidget(refresh)
@@ -300,9 +300,8 @@ class RunPanel(QWidget):
         self._seed_spin.setMinimumWidth(140)
         self._seed_spin.valueChanged.connect(self._on_seed_value)
         seed_row.addWidget(self._seed_spin)
-        dice = QPushButton("🎲")
+        dice = QPushButton("🎲 Random")
         dice.setObjectName("small_btn")
-        dice.setFixedWidth(40)
         dice.setToolTip("Pick a new fixed seed")
         dice.clicked.connect(lambda: self._seed_spin.setValue(random.randint(0, 2_147_483_647)))
         seed_row.addWidget(dice)
@@ -640,6 +639,12 @@ class RunPanel(QWidget):
         self._cfg.set(self._config_key(), rel)
         self._workflow_path = Path(self._cfg.get("workflow_dir", "")) / rel
         self._load_analysis()
+        self.workflow_selected.emit(rel)
+
+    @property
+    def workflow_rel(self) -> str:
+        """The selected workflow, relative to the Workflows folder ("" before one is chosen)."""
+        return self._workflow_rel or ""
 
     def _reload_workflow(self):
         if self._workflow_path is not None:

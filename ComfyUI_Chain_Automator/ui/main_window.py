@@ -298,8 +298,8 @@ class ConvertDialog(QDialog):
         out_lbl.setStyleSheet(f"color:{COLORS['fg_secondary']}; font-size:10pt;")
         self._out_edit = QLineEdit(out_dir)
         self._out_edit.setFixedHeight(34)
-        browse_btn = QPushButton("...")
-        browse_btn.setFixedSize(40, 34)
+        browse_btn = QPushButton("Browse")
+        browse_btn.setFixedHeight(34)
         browse_btn.clicked.connect(self._browse)
         out_row.addWidget(out_lbl)
         out_row.addWidget(self._out_edit, stretch=1)
@@ -604,8 +604,8 @@ class MainWindow(QMainWindow):
         header.setObjectName("header")
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        settings_btn = QPushButton("⚙")
-        settings_btn.setFixedSize(36, 36)
+        settings_btn = QPushButton("⚙ Settings")
+        settings_btn.setFixedHeight(36)
         settings_btn.setToolTip("Settings")
         settings_btn.setStyleSheet(f"""
             QPushButton {{
@@ -613,8 +613,9 @@ class MainWindow(QMainWindow):
                 color: {COLORS['fg_secondary']};
                 border: 1px solid {COLORS['border']};
                 border-radius: 4px;
-                font-size: 16pt;
-                padding: 0px;
+                font-size: 10pt;
+                font-weight: normal;
+                padding: 0px 12px;
             }}
             QPushButton:hover {{ background-color: {COLORS['accent']}; color: white; }}
         """)
@@ -673,8 +674,8 @@ class MainWindow(QMainWindow):
         self._input_dir_edit = QLineEdit(self.config.get("input_dir", ""))
         self._input_dir_edit.setPlaceholderText("Folder containing starting images...")
         self._input_dir_edit.setReadOnly(True)
-        folder_browse_btn = QPushButton("...")
-        folder_browse_btn.setFixedWidth(40)
+        folder_browse_btn = QPushButton("Browse")
+        folder_browse_btn.setObjectName("small_btn")
         folder_browse_btn.setFixedHeight(30)
         folder_browse_btn.clicked.connect(self._browse_input_dir)
         self._show_all_chk = QCheckBox("Show all")
@@ -726,8 +727,9 @@ class MainWindow(QMainWindow):
         self._chain_folder_combo.setMinimumHeight(30)
         self._chain_folder_combo.setToolTip("Select a video chain workflow folder")
         self._chain_folder_combo.currentIndexChanged.connect(self._on_chain_folder_changed)
-        refresh_chain_btn = QPushButton("↻")
-        refresh_chain_btn.setFixedSize(30, 30)
+        refresh_chain_btn = QPushButton("↻ Refresh")
+        refresh_chain_btn.setObjectName("small_btn")
+        refresh_chain_btn.setFixedHeight(30)
         refresh_chain_btn.setToolTip("Refresh chain folder list")
         refresh_chain_btn.clicked.connect(self._refresh_chain_folders)
         chain_sel_row.addWidget(chain_sel_lbl)
@@ -847,8 +849,8 @@ class MainWindow(QMainWindow):
         self._vid_dir_edit = QLineEdit(self.config.get("final_video_dir", ""))
         self._vid_dir_edit.setPlaceholderText("Folder containing video files...")
         self._vid_dir_edit.setReadOnly(True)
-        vid_browse_btn = QPushButton("...")
-        vid_browse_btn.setFixedWidth(40)
+        vid_browse_btn = QPushButton("Browse")
+        vid_browse_btn.setObjectName("small_btn")
         vid_browse_btn.setFixedHeight(40)
         vid_browse_btn.clicked.connect(self._browse_video_dir)
         refresh_btn = QPushButton("↻  Refresh")
