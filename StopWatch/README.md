@@ -39,3 +39,4 @@ python stopwatch.py
 | Version | Notes |
 |---------|-------|
 | v1.0.0 | Initial release |
+| v1.1.2 | Timer spinbox labels now read "Hours=HH", "Minutes=MM", "Seconds=SS" instead of bare HH / MM / SS |
