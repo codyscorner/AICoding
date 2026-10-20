@@ -63,6 +63,10 @@ Root Folder/
 
 ## Changelog
 
+### v1.2.8
+- The window, dialogs and taskbar now use the app icon (previously only the EXE file had it): app-wide `setWindowIcon` plus its own `AppUserModelID`, so Windows stops grouping it under python.exe. The icon is bundled into the EXE and loaded from PyInstaller's unpack folder.
+- `IMDB_Photo_Downloader.spec` is gitignored (`*.spec`); it needs `datas=[('app_icon.ico', '.')]` and the existing `icon=` line.
+
 ### v1.2.7
 - Widened the per-image download pacing from a sub-second gap to a "someone is actually looking at the photo" delay: never under 2s, usually 2-6s, occasionally lingering up to 10s (`random.triangular(2.0, 10.0, 4.0)`). Only applies between actual downloads — skipped/cached files aren't delayed. This only affects per-image pacing; scroll/page-navigation jitter from v1.2.6 is unchanged.
 
