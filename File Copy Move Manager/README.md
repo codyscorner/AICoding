@@ -2,13 +2,28 @@
 
 A powerful dual-mode tool for batch **copying** or **moving** files with flexible folder organization, advanced filtering, and incremental backup support.
 
-## Version 3.4.0
+## Version 3.5.1
 
 **Gold theme = Copy Mode | Red theme = Move Mode** — instantly distinguishable from the companion File Rename Mover (always red).
 
 ---
 
 ## What's New
+
+### v3.5.1 — "Newest wins": newer source updates, older source is skipped
+- With **Incremental on**, a file whose name is already at the destination is compared by **modified date** (never the created date — a copy resets that to "now"): a **newer source is copied over the older copy** (Preview: *Update (newer source)*), an **older source is skipped** (*Skipped — file is older*).
+- Applies with *Number duplicate files* **off** (and always in Preserve-structure layouts). With numbering **on**, nothing is ever overwritten.
+- Preview gains a **Current Size** column (next to *Source Size*), so a "newer" file that is 15× bigger than the one it replaces — a different rendition rather than a re-save — stands out.
+- The newest of several different files with one name gets the plain name; a file's date is the date of its newest copy.
+
+### v3.5.0 — Preview you can trust: copy, then Preview shows nothing
+- **Preview compares the plan with what is at the destination now** — Pre-Destination Path / Date-Time (where the file will be written once folder structure, date folders and `_001` numbering are applied) next to Current Destination Path / Date-Time (what is there now), plus an Action for every file. It opens on the files that actually need copying; tick the box to see everything else too.
+- **One planner for Preview, Copy and Multi-Source** (`copy_plan.py`) — what you preview is exactly what is copied, so after a clean copy the next Preview is empty.
+- **Different images with the same name are never overwritten any more** — with *Number duplicate files* on they are kept as `name_001`, `name_002` …; with it off the later file is skipped and Preview says so.
+- Numbered copies from earlier runs are recognised, one-hour daylight-saving date gaps are ignored, and same-size files with another date are compared by content before being called "changed".
+- Fixes: **"Copyd" → "Copied"**; Move Mode could delete the source when Cancel hit mid-way through a large file; Multi-Source + Incremental crashed (`name 'self' is not defined`); the single-worker loop recounted results after every file.
+- Copies are written to a temporary name and renamed when complete — a cancel or error never leaves a half-written file.
+- 130 automated tests (`tests/`).
 
 ### v3.4.0 — Copy Order Control
 - **Copy order dropdown** (both tabs) — choose how files are processed: **Largest first** (new default), Smallest first, Oldest first (modified date), or Directory order (as found)
@@ -74,8 +89,30 @@ A powerful dual-mode tool for batch **copying** or **moving** files with flexibl
 | By Month | `2025-12/file.jpg` |
 
 ### Duplicate Handling
-- **Number duplicates** — appends `_001`, `_002`, etc. (default, safest)
-- **Skip duplicates** — leaves existing files untouched
+When a *different* file already has the name a file wants (common when you organize by date, because many folders hold a `photo.png`):
+- **Number duplicates** — the new file is saved as `photo_001.png`, `photo_002.png` … (default, safest). Numbered copies from earlier runs are recognised, so re-running never adds more.
+- **Skip duplicates** — leaves the existing file untouched and skips the new one. Preview and the completion message count these as *name in use* so you can see what was left out.
+
+Identical files are never copied twice, in either setting. With **Incremental on** and numbering **off** the file with the **newest modified date wins** the name (see *Newest wins* below); with numbering **on**, or Incremental off, nothing is ever overwritten.
+
+### Preview (what "up to date" means)
+Click **Preview** to see the plan before anything is written. Every file is compared with what is already at the destination; it needs copying only when nothing there already represents it. Existing files count as "already there" when:
+
+| Setting | A file is already there when … |
+|---|---|
+| **Incremental on** | a file with the same size and the same date exists (within 2 s, or exactly 1 hour apart for daylight saving). If only the date differs, the contents are compared so identical files are not reported as changed. Size + date are trusted, also between two source files. |
+| **Incremental off** | a file with identical contents exists (MD5; only same-size files are compared) — nothing is trusted. |
+
+"Existing file" includes `name_001`, `name_002` … made by earlier runs. After a copy with no errors, Preview shows nothing to copy; files that failed stay listed.
+
+**Newest wins** (Incremental on, and Number duplicate files off — or a Preserve-structure layout). When a *different* file already has the name, the two are compared by **modified date**:
+
+| Source vs. the copy at the destination | Result |
+|---|---|
+| Source is **newer** | **Update (newer source)** — it changed, so it is copied over the older copy |
+| Source is **older** (or the same date) | **Skipped — file is older** — the destination copy stays |
+
+When several different files share one name the newest gets it, so after a copy every name holds its newest version and the next Preview is empty. A file's date is that of its newest copy. Check the **Current Size** column before copying: an update that is many times bigger or smaller than the file it replaces is usually a different rendition (for example an original versus a resized copy), not an edit.
 
 ### Copy Order
 - **Largest first** (default) — best load-balancing for parallel workers
@@ -104,12 +141,13 @@ A powerful dual-mode tool for batch **copying** or **moving** files with flexibl
 - Sequential multi-source processing to protect USB controllers
 
 ### Copy Quality
-- **Chunked I/O** — 4 MB chunks for files ≥ 120 MB; real-time progress and Cancel support
-- **MD5 verification** (optional) — post-copy hash comparison
-- **Incremental mode** (optional) — skip unchanged files
+- **Safe writes** — each file is copied to a temporary `~fcmm_….partial` name and renamed into place only when complete; a cancel or error never leaves a half-written file, and in Move Mode the source is deleted only after a complete copy is in place
+- **Chunked I/O** — 8 MB chunks for files ≥ 120 MB; real-time progress and Cancel support
+- **MD5 verification** (optional) — the copy is hash-checked before it is put in place
+- **Incremental mode** (optional) — skip files that are already there (see *Preview* above)
 - **Network retry** — 3 attempts, 1.5 s delay on `OSError`
-- **Long path handling** — paths exceeding Windows 260-char limit auto-truncated with `_tr_###` suffix
-- **Metadata preserved** — `shutil.copy2` keeps timestamps and permissions
+- **Long path handling** — paths exceeding the Windows 260-char limit are shortened with a `_tr_001` suffix
+- **Metadata preserved** — timestamps and attributes are copied with the file
 
 ### Configuration Persistence
 All settings auto-saved to `config.json` on close and restored on next launch.
@@ -144,16 +182,19 @@ pip install PyQt6
 File Copy Move Manager/
 ├── main.py                  # Entry point
 ├── config.py                # JSON configuration manager
-├── file_operations.py       # FileCopier, FileScanner, FileValidator
+├── copy_plan.py             # The planner — decides what happens to every file (Preview + Copy + Multi-Source)
+├── file_operations.py       # FileCopier (executes a plan), FileScanner, FileValidator
 ├── folder_organization.py   # FolderOrganizer, FolderStructure enum
 ├── profiles.py              # ProfileManager — saved settings profiles
 ├── ui/
 │   ├── main_window.py       # MainWindow — tab host, mode sync
 │   ├── multi_source_tab.py  # MultiSourceTab — multi-folder batch
-│   ├── preview_dialog.py    # PreviewDialog — pre-copy file list
+│   ├── preview_dialog.py    # PreviewDialog — plan vs. destination table
 │   ├── save_profile_dialog.py    # Save-profile dialog
 │   ├── manage_profiles_dialog.py # Manage-profiles dialog
+│   ├── verbs.py             # "Copy"/"Copied", "Move"/"Moved" in one place
 │   └── styles.py            # Gold + red themes, get_stylesheet(mode)
+├── tests/                   # pytest: planner, copier, Preview, both tabs (python -m pytest tests)
 ├── app_icon.ico
 ├── config.json              # User settings (auto-generated)
 ├── README.md
@@ -166,12 +207,13 @@ File Copy Move Manager/
 ## Use Cases
 
 ### 1. Photo Library Backup (non-destructive)
-- Mode: Copy | Preserve structure | Number duplicates
-- Re-run as many times as needed; incremental mode skips unchanged files
+- Mode: Copy | Preserve structure | Incremental
+- Re-run as many times as needed: unchanged files are skipped, changed files are updated in place, and Preview shows nothing when everything is backed up
 
 ### 2. Consolidate by Date
-- Mode: Copy | By Year/Month | Number duplicates
-- Pulls scattered files into a chronological hierarchy
+- Mode: Copy | By Year/Month | Number duplicates | Incremental
+- Pulls scattered files into a chronological hierarchy; same-named different images are kept as `name_001` …
+- Re-run any time — copies are recognised, so only new files are added
 
 ### 3. Archive and Clear (move)
 - Mode: Move | Preserve structure | Number duplicates
@@ -187,6 +229,10 @@ File Copy Move Manager/
 
 | Version | Date | Highlights |
 |---|---|---|
+| 3.5.1 | 2026-10-22 | "Newest wins": newer source updates, older source skipped ("file is older"); Current Size column |
+| 3.5.0 | 2026-10-22 | Shared planner; Preview compares Pre-Destination with Current Destination; no more overwritten same-name images; "Copied" typo; Move/Cancel + Multi-Source fixes; tests |
+| 3.4.2 | 2026-10-08 | New app icon + taskbar identity |
+| 3.4.1 | 2026-06-30 | Total bytes copied reported on completion |
 | 3.4.0 | 2026-06-29 | Copy order dropdown (largest-first default); modified-date consistency |
 | 3.3.12 | 2026-06-29 | Log header uses plain `=` (cp1252-safe) |
 | 3.3.11 | 2026-06-29 | Run-settings header written to log |
@@ -213,7 +259,10 @@ File Copy Move Manager/
 
 ## Roadmap
 
+- **Preview on the Multi-Source tab** — the planner already powers its runs; only the dialog is missing
 - **Command-line interface** — headless mode for scripting / scheduled tasks (low priority, not started)
+
+**Not planned here: duplicate detection across folders.** Date folders are chosen from each file's *modified* date, so a file whose date is re-stamped (by an edit or by a tool that resets dates) lands in a new month folder and is copied again; the earlier copy stays where it is. This app only compares a file with the destination it is headed for. Finding and removing byte-identical files across the whole backup is the job of the separate hash-dedupe app. For a backup with no drift, use the **Keep folder structure** layout: each file's destination follows its source path, so a re-stamped file updates in place (as long as the source folders aren't reorganised).
 
 ## Related Projects
 

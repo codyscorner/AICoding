@@ -252,17 +252,17 @@ QTabBar::tab:selected {{
 QTabBar::tab:hover:!selected {{
     background-color: {C['bg_light']};
 }}
-QTableWidget {{
+QTableView {{
     background-color: {C['input_bg']};
     color: {C['foreground']};
     border: 1px solid {C['border']};
     gridline-color: {C['border']};
     alternate-background-color: {C['bg_mid']};
 }}
-QTableWidget::item {{
+QTableView::item {{
     padding: 4px 8px;
 }}
-QTableWidget::item:selected {{
+QTableView::item:selected {{
     background-color: {C['select_bg']};
     color: {C['select_fg']};
 }}

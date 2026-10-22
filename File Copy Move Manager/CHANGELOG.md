@@ -5,6 +5,62 @@ All notable changes to File Copy Move Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.1] - 2026-10-22
+
+**"Newest wins" — your update rule.** With Incremental on, a file whose name is already at the destination is now compared by **modified date** (never the created date: copying resets a file's created date to "now", so only the modified date means the same thing on both sides of a copy).
+
+### Added
+- **Source newer than the destination copy → the file changed → it is copied over the older copy.** Preview calls it **Update (newer source)**; the row shows the planned path/date next to the file it will replace, now with both sizes.
+- **Source older than the destination copy → "Skipped — file is older"** (new reason, instead of "name in use"). A tie (same date, different bytes) keeps the destination copy, so two different files can never flip-flop.
+- **Current Size column** in Preview (and "Source Size" for the other side), so a "newer" file that is 15x bigger than the one it replaces — a different rendition, not a re-save — is visible at a glance.
+- When several *different* files share one name, the **newest** one gets the plain name (previously the oldest did); with numbering on the older ones become `name_001`, `name_002` …
+- A version's date is the date of its **newest copy**, and that is the file copied (so the destination carries the newest date).
+- Sources that match a destination copy that is about to be replaced are shown as "older" in the same Preview (not "up to date"), so Preview before and after the copy reads the same.
+- Tooltips on the date columns say "Modified date (not the created date)"; "older" rows say which newer file they lost to.
+
+### Changed (behaviour)
+- Applies with **Incremental on and Number duplicate files off** (your saved profile) in any layout, and always in Preserve-structure layouts. With **Number duplicate files on** nothing is ever overwritten (a different file with the same name is kept as `name_001`, whatever its date). With Incremental off no dates are compared.
+- Preserve-structure layouts no longer overwrite a destination copy that is *newer* than the source (they used to replace it with the older file).
+- 21 new tests (151 in total), including repeated runs in which files are re-saved and added between runs: after every run the next Preview is empty and no source is both different and newer than its destination file.
+
+### Docs
+- README: dropped the "Already in the backup elsewhere" and "SQLite hash cache" roadmap items. Duplicate detection across folders belongs to the separate hash-dedupe app. Added a note explaining why date folders can make a second copy of a re-stamped file, and that Keep folder structure is the layout that doesn't drift.
+
+---
+
+## [3.5.0] - 2026-10-22
+
+**Preview and Copy now share one planner, so after a copy the next Preview shows nothing.** Before this, an Incremental run into a date-organized destination could never finish: different images with the same file name (and month) fought over one destination file, each run swapped which one was there, and Preview kept listing ~15–19 thousand files no matter how often you copied. On a real 255,382-image backup it also meant thousands of distinct images were missing from the backup.
+
+### Added
+- **Preview compares what will be written with what is there now.** Columns: Filename, Size, Source Path, **Pre-Destination Path**, **Pre-Destination Date/Time** (the path after folder structure, date folders and numbering are applied, and the date the copy will carry), **Current Destination Path**, **Current Date/Time** (the file at the destination now), and an **Action** (New, New (numbered), Update (overwrite), Up to date, Same content, Same as another source, Skipped — name in use) shown with a status dot. It opens on the files that actually need copying; a checkbox adds everything else so you can see exactly what exists. Sorting by size/dates is numeric; columns are resizable; destination paths cut their left side so the date folder and file name stay visible; hover for full paths and sizes.
+- **`copy_plan.py` — the planner** (`build_plan`). It decides, for every source file, where it will be written and whether it needs writing. Preview shows its plan, Copy executes exactly that plan, and the Multi-Source tab uses it too (one rule set for both tabs).
+- **Numbered copies are recognised.** `photo.png`, `photo_001.png`, `photo_002.png` … at the destination all count as "already there", so earlier numbered copies are never copied again.
+- **Daylight-saving aware.** A date that differs by exactly one hour (±2 s) counts as the same date. On the test backup this alone explained 8,820 false "changed" files.
+- **Content check when only the date differs.** Same-size files with another date are compared by MD5 (files over 256 MB are not hashed in Incremental mode) so identical files are not reported as changed.
+- **Honest summaries.** Preview and the completion message break skips down by reason (already up to date / same content / same image as another source / name in use) instead of one bare number. When every remaining file is skipped because its *name is in use by a different file*, Preview says so instead of claiming everything is already at the destination.
+- Preview can be cancelled while it scans; its status shows progress ("Comparing file contents… 1,200 of 5,888").
+- A note is logged if a leftover `~fcmm_*.partial` temp file from an interrupted copy is found at the destination.
+- **Automated tests** (`tests/`, 130): every matching rule, randomized convergence across all option combinations, cancel/move safety, and the Preview dialog.
+
+### Changed (behaviour — please read)
+- **Incremental never overwrites a different file that happens to share a name** in Flat / By-Date layouts. Previously it silently replaced it, which is how images were lost from the backup. In Preserve-structure (mirror) layouts, where a destination path belongs to exactly one source file, a changed file is still updated in place.
+- **"Number duplicate files" is honoured with Incremental on** (it used to be ignored). With it **off**, a name already used by a *different* file means the new file is **skipped, never overwritten**, and it is counted and explained. Turn numbering on to keep both as `name_001`, `name_002` …
+- Incremental still means "size + date are enough", also between two source files (same name, size and date = same file). Switch Incremental off for byte-for-byte checking.
+- **Number-duplicates mode is now repeatable.** It used to add another identical `photo_002`, `_003` … on every re-run (it only compared against the plain name).
+- Copies are written to a temporary `~fcmm_….partial` name next to their destination and renamed when complete, so a cancel or failure never leaves a half-written file under the real name.
+- Multi-Source: the planner replaces the separate incremental pre-filter; parallel workers can no longer overwrite or falsely skip each other (each destination path has exactly one writer).
+
+### Fixed
+- **"Copyd" is now "Copied"** — in the Preview heading, the Copied counter label and the Multi-Source "Total Copied" label (new `ui/verbs.py` holds the verb forms in one place).
+- **Move Mode could delete the source and leave a truncated copy** if Cancel (or the watchdog) hit in the middle of a file of 120 MB or more. The source is now deleted only after a complete copy is in place and its size matches.
+- **Multi-Source with Incremental on crashed** with `name 'self' is not defined` as soon as any file was already up to date.
+- The single-worker copy loop recounted every finished file after each file (quadratic); on a 255,000-file run that was roughly 23 minutes of pure counting. Counters are now running totals.
+- The live-transfer row stayed on screen if a large copy failed.
+- Cancel during Preview did nothing; it now stops the scan.
+
+---
+
 ## [3.4.2] - 2026-10-08
 
 ### Changed
