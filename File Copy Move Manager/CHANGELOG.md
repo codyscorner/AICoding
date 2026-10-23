@@ -5,6 +5,13 @@ All notable changes to File Copy Move Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.2] - 2026-10-22
+
+### Changed
+- **Preview no longer prints "Nothing to do:" under a heading that says there are files to copy.** The line under the heading lists only what will be written (New / numbered / Update). "Nothing to copy …" appears only as the heading when nothing needs copying.
+- **The list contains only files that need action**, also when there are none (it used to switch to showing every skipped file automatically). The skipped files are still one click away on the **Also show the N files that will not be copied** box, which now carries their breakdown (e.g. `up to date 42 · same image as another source 10 · file is older 2,759`).
+- 1 new test (152 in total).
+
 ## [3.5.1] - 2026-10-22
 
 **"Newest wins" — your update rule.** With Incremental on, a file whose name is already at the destination is now compared by **modified date** (never the created date: copying resets a file's created date to "now", so only the modified date means the same thing on both sides of a copy).

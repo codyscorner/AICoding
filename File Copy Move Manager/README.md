@@ -2,13 +2,17 @@
 
 A powerful dual-mode tool for batch **copying** or **moving** files with flexible folder organization, advanced filtering, and incremental backup support.
 
-## Version 3.5.1
+## Version 3.5.2
 
 **Gold theme = Copy Mode | Red theme = Move Mode** — instantly distinguishable from the companion File Rename Mover (always red).
 
 ---
 
 ## What's New
+
+### v3.5.2 — Preview lists only what needs doing
+- The list shows only the files that will be copied; "Nothing to …" appears only when that list is empty (it no longer shows up under a heading that says there *are* files to copy).
+- The counts of skipped files (up to date, file is older …) moved onto the **Also show the N files that will not be copied** box, which still adds them to the list on request.
 
 ### v3.5.1 — "Newest wins": newer source updates, older source is skipped
 - With **Incremental on**, a file whose name is already at the destination is compared by **modified date** (never the created date — a copy resets that to "now"): a **newer source is copied over the older copy** (Preview: *Update (newer source)*), an **older source is skipped** (*Skipped — file is older*).
@@ -229,6 +233,7 @@ File Copy Move Manager/
 
 | Version | Date | Highlights |
 |---|---|---|
+| 3.5.2 | 2026-10-22 | Preview lists only the files to copy; "Nothing to …" only when there are none; skip counts on the "Also show" box |
 | 3.5.1 | 2026-10-22 | "Newest wins": newer source updates, older source skipped ("file is older"); Current Size column |
 | 3.5.0 | 2026-10-22 | Shared planner; Preview compares Pre-Destination with Current Destination; no more overwritten same-name images; "Copied" typo; Move/Cancel + Multi-Source fixes; tests |
 | 3.4.2 | 2026-10-08 | New app icon + taskbar identity |

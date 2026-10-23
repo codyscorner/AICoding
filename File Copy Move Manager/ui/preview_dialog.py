@@ -97,27 +97,26 @@ def _dot_icon(colour: str, size: int = 16) -> QIcon:
     return QIcon(pixmap)
 
 
+def _join_counts(plan: Plan, pairs) -> str:
+    return "  ·  ".join(f"{label} {plan.counts[a]:,}" for a, label in pairs if plan.counts[a])
+
+
 def summary_lines(plan: Plan, verb: str) -> list:
-    """The two breakdown lines shown above the table (empty groups are left out)."""
-    c = plan.counts
+    """The breakdown of what will be written, shown under the heading. Only files that need
+    action are listed here; the files that are skipped are counted on the "Also show" box."""
+    todo = _join_counts(plan, [(Action.NEW, "New"),
+                               (Action.NUMBERED, "New, numbered (name in use)"),
+                               (Action.REFRESH, "Update (newer source copied over the older copy)")])
+    return [f"To {verb.lower()}:  {todo}"] if todo else []
 
-    def join(pairs):
-        return "  ·  ".join(f"{label} {c[a]:,}" for a, label in pairs if c[a])
 
-    todo = join([(Action.NEW, "New"),
-                 (Action.NUMBERED, "New, numbered (name in use)"),
-                 (Action.REFRESH, "Update (newer source copied over the older copy)")])
-    done = join([(Action.UP_TO_DATE, "Up to date"),
-                 (Action.SAME_CONTENT, "Same content, date differs"),
-                 (Action.DUPLICATE_SOURCE, "Same image as another source"),
-                 (Action.OLDER, "Skipped, file is older"),
-                 (Action.NAME_TAKEN, "Skipped, name in use")])
-    lines = []
-    if todo:
-        lines.append(f"To {verb.lower()}:  {todo}")
-    if done:
-        lines.append(f"Nothing to do:  {done}")
-    return lines
+def skipped_breakdown(plan: Plan) -> str:
+    """Why the files that are not written are skipped, e.g. "up to date 42 · file is older 2,759"."""
+    return _join_counts(plan, [(Action.UP_TO_DATE, "up to date"),
+                               (Action.SAME_CONTENT, "same content, date differs"),
+                               (Action.DUPLICATE_SOURCE, "same image as another source"),
+                               (Action.OLDER, "file is older"),
+                               (Action.NAME_TAKEN, "name in use")])
 
 
 class _ElideLeftDelegate(QStyledItemDelegate):
@@ -318,7 +317,7 @@ class PreviewDialog(QDialog):
 
         self._show_all = QCheckBox(
             f"Also show the {plan.skipped_count:,} file{'s' if plan.skipped_count != 1 else ''} that will not be "
-            f"{past.lower()} (already there, same content, skipped)"
+            f"{past.lower()}:  {skipped_breakdown(plan)}"
         )
         self._show_all.setVisible(plan.skipped_count > 0)
         self._show_all.toggled.connect(self._on_show_all)
@@ -364,10 +363,6 @@ class PreviewDialog(QDialog):
             btn_row.addSpacing(10)
             btn_row.addWidget(self.proceed_btn)
         layout.addLayout(btn_row)
-
-        if not count:
-            # Nothing left to copy is exactly when you want to *see* what is there.
-            self._show_all.setChecked(True)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)

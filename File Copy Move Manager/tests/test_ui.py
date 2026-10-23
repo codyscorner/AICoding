@@ -120,7 +120,17 @@ def test_update_and_older_rows_use_your_wording_and_show_both_sizes(qapp, tmp_pa
     assert model.data(model.index(update, COL_SIZE)) == "12.0 B"          # source size ...
     assert model.data(model.index(update, COL_CUR_SIZE)) == "3.0 B"       # ... next to the destination's
     text = " ".join(summary_lines(plan, "Copy"))
-    assert "Update" in text and "Skipped, file is older 1" in text
+    assert "Update" in text and "file is older" not in text  # the summary lists only what will be written
+
+
+def test_no_nothing_to_do_line_when_there_is_something_to_copy(qapp, tmp_path):
+    from ui.preview_dialog import PreviewDialog
+    _src, _dest, plan = newest_wins_plan(tmp_path)
+    dialog = PreviewDialog(plan, {"operation_mode": "copy"})
+    text = all_label_text(dialog)
+    assert "Nothing to" not in text
+    assert "1 file that will not be copied:  file is older 1" in dialog._show_all.text()
+    assert dialog.table.model().rowCount() == 1              # only the update is listed
 
 
 def test_only_older_files_left_is_nothing_to_copy_not_a_warning(qapp, tmp_path):
@@ -129,7 +139,7 @@ def test_only_older_files_left_is_nothing_to_copy_not_a_warning(qapp, tmp_path):
     assert plan.copy_count == 0 and plan.counts[Action.OLDER] == 1
     text = all_label_text(PreviewDialog(plan, {"operation_mode": "copy"}))
     assert "Nothing to copy — everything is already at the destination" in text
-    assert "Skipped, file is older 1" in text
+    assert "file is older 1" in text
 
 
 def test_dates_are_the_modified_date_and_the_tooltip_says_so(qapp, tmp_path):
@@ -226,8 +236,10 @@ def test_nothing_to_copy_is_said_clearly_and_offers_no_proceed_button(qapp, tmp_
     dialog = PreviewDialog(make_plan(src, dest), {"operation_mode": "copy"})
     assert "Nothing to copy — everything is already at the destination" in all_label_text(dialog)
     assert not hasattr(dialog, "proceed_btn")
-    # nothing left to copy is when you want to see what is there, so the matches are shown
-    assert dialog.table.model().rowCount() == 1 and dialog._show_all.isChecked()
+    # the list holds only files that need action, so it is empty; the box shows the rest on request
+    assert dialog.table.model().rowCount() == 0 and not dialog._show_all.isChecked()
+    dialog._show_all.setChecked(True)
+    assert dialog.table.model().rowCount() == 1
 
 
 def test_nothing_to_copy_because_names_are_taken_does_not_claim_everything_is_there(qapp, tmp_path):
