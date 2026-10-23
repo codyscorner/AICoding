@@ -2,13 +2,17 @@
 
 A powerful dual-mode tool for batch **copying** or **moving** files with flexible folder organization, advanced filtering, and incremental backup support.
 
-## Version 3.5.2
+## Version 3.5.3
 
 **Gold theme = Copy Mode | Red theme = Move Mode** — instantly distinguishable from the companion File Rename Mover (always red).
 
 ---
 
 ## What's New
+
+### v3.5.3 — The Recycle Bin is never scanned
+- `$RECYCLE.BIN`, `RECYCLER` and `System Volume Information` are skipped at any depth, so deleted files are never backed up.
+- Tip: `*.ts` (MPEG transport stream video) also matches TypeScript code files; leave it out of the extension box for drives that hold code.
 
 ### v3.5.2 — Preview lists only what needs doing
 - The list shows only the files that will be copied; "Nothing to …" appears only when that list is empty (it no longer shows up under a heading that says there *are* files to copy).
@@ -233,6 +237,7 @@ File Copy Move Manager/
 
 | Version | Date | Highlights |
 |---|---|---|
+| 3.5.3 | 2026-10-22 | Recycle Bin / System Volume Information never scanned |
 | 3.5.2 | 2026-10-22 | Preview lists only the files to copy; "Nothing to …" only when there are none; skip counts on the "Also show" box |
 | 3.5.1 | 2026-10-22 | "Newest wins": newer source updates, older source skipped ("file is older"); Current Size column |
 | 3.5.0 | 2026-10-22 | Shared planner; Preview compares Pre-Destination with Current Destination; no more overwritten same-name images; "Copied" typo; Move/Cancel + Multi-Source fixes; tests |

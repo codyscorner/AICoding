@@ -121,6 +121,11 @@ class FileValidator:
 class FileScanner:
     """Scans directories for files matching criteria"""
 
+    # Windows system folders that are never scanned: the Recycle Bin (deleted files; RECYCLER is its
+    # pre-Vista name) and System Volume Information (restore points, unreadable anyway). Matched by name,
+    # ignoring case, at any depth.
+    SKIPPED_FOLDERS = frozenset({"$recycle.bin", "recycler", "system volume information"})
+
     @staticmethod
     def _matches_any_pattern(filename: str, patterns: List[str]) -> bool:
         """
@@ -187,6 +192,7 @@ class FileScanner:
         rows = []  # (full_path, rel_path, size, mtime)
         if recursive:
             for root, dirs, filenames in os.walk(folder_path):
+                dirs[:] = [d for d in dirs if d.lower() not in FileScanner.SKIPPED_FOLDERS]
                 for filename in filenames:
                     full_path = os.path.join(root, filename)
                     ok, size, mtime = _accept(full_path, filename)

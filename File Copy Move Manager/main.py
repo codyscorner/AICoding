@@ -9,7 +9,7 @@ from PyQt6.QtGui import QIcon
 from config import ConfigManager
 from ui.main_window import MainWindow
 
-VERSION = "3.5.2"
+VERSION = "3.5.3"
 
 # Own taskbar identity so Windows doesn't group us under python.exe.
 try:

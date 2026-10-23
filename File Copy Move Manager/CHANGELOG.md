@@ -5,6 +5,15 @@ All notable changes to File Copy Move Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.3] - 2026-10-22
+
+### Changed
+- **The Recycle Bin is never scanned.** `$RECYCLE.BIN` (and its pre-Vista name `RECYCLER`) and `System Volume Information` are skipped at any depth, on both tabs, for Preview, Copy and Move. On the D:\ video backup the Recycle Bin had contributed 613 deleted Filmora preview videos (246 "new", 367 "older"), many sharing the names `preview.mp4` / `previewVideo.mp4`.
+- 1 new test (153 in total).
+
+### Note
+- `*.ts` in the Video extension list also matches **TypeScript code**: D:\ had 5,791 `.ts` files under `node_modules` and no `.ts` videos. Remove `*.ts` from the extension box when backing up a drive that holds code.
+
 ## [3.5.2] - 2026-10-22
 
 ### Changed

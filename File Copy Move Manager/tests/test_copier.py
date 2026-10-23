@@ -425,3 +425,15 @@ def test_parallel_workers_converge_too(tmp_path, seed):
     assert make_plan(src, dest, **opts).copy_count == 0
     assert set(first.values()) == set(tree(src).values())
     assert leftovers(dest) == []
+
+
+def test_the_recycle_bin_and_system_folders_are_never_scanned(tmp_path):
+    from helpers import scan
+    src = os.path.join(str(tmp_path), "src")
+    write(os.path.join(src, "keep", "real.png"), b"1")
+    write(os.path.join(src, "$RECYCLE.BIN", "S-1-5-21", "$R388UEN", "deleted.png"), b"2")
+    write(os.path.join(src, "System Volume Information", "restore.png"), b"3")
+    write(os.path.join(src, "old", "RECYCLER", "ancient.png"), b"4")             # any depth, any case
+    write(os.path.join(src, "my $recycle.bin notes", "kept.png"), b"5")          # only the exact names
+    names = sorted(os.path.basename(row[0]) for row in scan(src))
+    assert names == ["kept.png", "real.png"]
