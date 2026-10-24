@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QCheckBox, QSpinBox, QProgressBar, QListWidget, QComboBox,
     QRadioButton, QButtonGroup,
     QGroupBox, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QFileDialog, QMessageBox,
+    QFileDialog, QMessageBox, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon
@@ -54,7 +54,7 @@ class MainWindow(QMainWindow):
         self._pending_compare_mode = False
 
         self.setWindowTitle(f"File Hash Dedupe v{self.version}")
-        self.setMinimumSize(750, 620)
+        self.setMinimumSize(750, 760)
         self.setStyleSheet(STYLESHEET)
 
         geom = self.config.window_geometry
@@ -67,8 +67,12 @@ class MainWindow(QMainWindow):
         else:
             self.resize(800, 650)
 
+        # SQLite hash cache lives next to the config file (next to the EXE when frozen)
+        self.db_path = Path(self.config.config_file).parent / "FileHashDedupe_hashes.db"
+
         self._build_ui()
         self._load_config()
+        self._refresh_cache_label()
 
         self._poll_timer = QTimer()
         self._poll_timer.setInterval(50)
@@ -87,9 +91,11 @@ class MainWindow(QMainWindow):
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
 
-        subtitle = QLabel("Find and move duplicate files based on content hash")
+        subtitle = QLabel("Find and move duplicate files based on content hash — "
+                          "hashes are cached, so a rescan only hashes new or changed files")
         subtitle.setObjectName("subtitle")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
 
         # Mode
@@ -141,6 +147,10 @@ class MainWindow(QMainWindow):
         # Options
         opt_group = QGroupBox("Options")
         opt_layout = QVBoxLayout(opt_group)
+        opt_layout.setContentsMargins(12, 16, 12, 12)
+        opt_layout.setSpacing(12)
+        # Never let the stretchy Status box squeeze these rows together
+        opt_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.recursive_check = QCheckBox("Search subfolders recursively")
         self.recursive_check.setChecked(True)
         opt_layout.addWidget(self.recursive_check)
@@ -173,13 +183,27 @@ class MainWindow(QMainWindow):
         self.workers_spin = QSpinBox()
         self.workers_spin.setRange(1, cpu_count)
         self.workers_spin.setValue(max(2, min(16, cpu_count // 2)))
-        self.workers_spin.setFixedWidth(60)
+        self.workers_spin.setFixedWidth(70)
         workers_row.addWidget(self.workers_spin)
         cpu_lbl = QLabel(f"(1 – {cpu_count} logical CPUs on this machine)")
         cpu_lbl.setObjectName("subtitle")
         workers_row.addWidget(cpu_lbl)
         workers_row.addStretch()
         opt_layout.addLayout(workers_row)
+
+        cache_row = QHBoxLayout()
+        cache_row.addWidget(QLabel("Hash cache:"))
+        self.cache_label = QLabel()
+        self.cache_label.setObjectName("subtitle")
+        self.cache_label.setToolTip(str(self.db_path))
+        self.cache_label.setMinimumWidth(1)          # long text may clip, never widen the window
+        cache_row.addWidget(self.cache_label, stretch=1)
+        self.clear_cache_btn = QPushButton("Clear Cache")
+        self.clear_cache_btn.setObjectName("small_btn")
+        self.clear_cache_btn.setToolTip("Forget every cached hash; the next scan hashes everything again")
+        self.clear_cache_btn.clicked.connect(self._clear_cache)
+        cache_row.addWidget(self.clear_cache_btn)
+        opt_layout.addLayout(cache_row)
         layout.addWidget(opt_group)
 
         # Buttons
@@ -208,7 +232,39 @@ class MainWindow(QMainWindow):
         status_layout = QVBoxLayout(status_group)
         self.status_list = QListWidget()
         status_layout.addWidget(self.status_list)
+        status_group.setMinimumHeight(120)
         layout.addWidget(status_group, stretch=1)
+
+    def _refresh_cache_label(self):
+        try:
+            stats = FileDeduplicator(self.db_path).cache_stats()
+            self.cache_label.setText(f"{stats['hashes']:,} hash(es) for {stats['files']:,} file(s) "
+                                     f"— {self.db_path.name}")
+        except Exception as e:
+            self.cache_label.setText(f"unavailable ({e})")
+
+    def _clear_cache(self):
+        reply = QMessageBox.question(
+            self, "Clear Hash Cache",
+            "Forget every cached hash?\n\nNo files are touched; the next scan just hashes everything again.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            FileDeduplicator(self.db_path).clear_cache()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not clear the cache:\n{e}")
+        self._refresh_cache_label()
+
+    def _finish_processing(self):
+        """Back to idle: buttons re-enabled, cache count refreshed"""
+        self._is_processing = False
+        self.dedupe_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
+        self.clear_cache_btn.setEnabled(True)
+        self._refresh_cache_label()
 
     def _on_mode_changed(self, single_checked: bool):
         compare_mode = not single_checked
@@ -316,7 +372,9 @@ class MainWindow(QMainWindow):
         self._pending_permanent_delete = permanent_delete
         self._pending_compare_mode = compare_mode
 
+        self.clear_cache_btn.setEnabled(False)
         self._deduplicator = FileDeduplicator(
+            self.db_path,
             status_callback=lambda msg: self._message_queue.put(('status', msg)),
             progress_callback=lambda cur, total, fname: self._message_queue.put(
                 ('progress', {'current': cur, 'total': total, 'filename': fname})
@@ -346,6 +404,8 @@ class MainWindow(QMainWindow):
                 self._message_queue.put(('cancelled', None))
             else:
                 self._message_queue.put(('scan_complete', scan_result))
+        except ValueError as e:
+            self._message_queue.put(('error', {'type': 'validation', 'message': str(e)}))
         except Exception as e:
             self._message_queue.put(('error', {'type': 'unexpected', 'message': str(e)}))
 
@@ -420,9 +480,7 @@ class MainWindow(QMainWindow):
 
     def _on_scan_complete(self, scan_result: ScanResult):
         if not scan_result.groups:
-            self._is_processing = False
-            self.dedupe_btn.setEnabled(True)
-            self.cancel_btn.setEnabled(False)
+            self._finish_processing()
             self.progress_label.setText("No duplicates found")
             noun = "matches" if self._pending_compare_mode else "duplicates"
             QMessageBox.information(self, "No Duplicates", f"No {noun} were found.")
@@ -450,17 +508,13 @@ class MainWindow(QMainWindow):
             thread.start()
             self._poll_timer.start()
         else:
-            self._is_processing = False
-            self.dedupe_btn.setEnabled(True)
-            self.cancel_btn.setEnabled(False)
+            self._finish_processing()
             self.progress_label.setText("Cancelled")
             self.status_list.addItem("Review cancelled, no files were changed")
             self.status_list.scrollToBottom()
 
     def _on_complete(self, data: dict):
-        self._is_processing = False
-        self.dedupe_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
+        self._finish_processing()
         self.progress_bar.setValue(100)
         self.progress_label.setText("Complete!")
         action_word = "deleted" if data.get('permanent_delete') else "moved"
@@ -482,17 +536,13 @@ class MainWindow(QMainWindow):
             )
 
     def _on_cancelled(self):
-        self._is_processing = False
-        self.dedupe_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
+        self._finish_processing()
         self.progress_label.setText("Cancelled")
         self.status_list.addItem("Operation cancelled by user")
         self.status_list.scrollToBottom()
 
     def _on_error(self, data: dict):
-        self._is_processing = False
-        self.dedupe_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
+        self._finish_processing()
         self.progress_label.setText("Error")
         msg = data['message']
         if data['type'] == 'validation':
