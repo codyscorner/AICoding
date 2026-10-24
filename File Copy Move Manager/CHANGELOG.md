@@ -5,6 +5,13 @@ All notable changes to File Copy Move Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.2] - 2026-10-08
+
+### Changed
+- **New app icon** (coral stack of two pages with a forward arrow). The old icon was a blue folder with an arrow that looked almost the same as another app's; every app icon is now unique. Generated with IconMaker.
+- Own `AppUserModelID` so the taskbar groups/shows this app instead of python.exe, and the icon is set app-wide so every dialog gets it too.
+- This is the first EXE build since 2026-06-29, so it also ships **v3.4.1** (total bytes copied on completion), which was committed but never deployed.
+
 ## [3.4.1] - 2026-06-30
 
 ### Added

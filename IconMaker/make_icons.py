@@ -403,6 +403,53 @@ APPS = [
             "square icon, sharp edges, modern Windows app icon design, 512x512"
         ),
     },
+    {
+        "name": "S3Browser",
+        "project_folder": "S3_Broswer",
+        "prompt": (
+            "Minimalist flat app icon, dark slate navy background #0d1626, "
+            "a glowing cyan cloud with a folder and file document hanging below it "
+            "connected by thin lines, and a small upload/download arrow pair, "
+            "representing browsing cloud object storage, "
+            "clean vector style, no text, square icon, sharp edges, "
+            "modern Windows app icon design, 512x512"
+        ),
+    },
+    {
+        "name": "FolderSync",
+        "project_folder": "FolderSync",
+        "prompt": (
+            "Minimalist flat app icon, deep dark plum background #1a0a1c, "
+            "two glowing hot magenta circular arrows chasing each other in a "
+            "continuous sync loop, with a small folder tab on the left and right "
+            "of the loop, neon pink #ff2d95 glow, representing two-way folder "
+            "synchronization, clean vector style, no text, square icon, "
+            "sharp edges, modern Windows app icon design, 512x512"
+        ),
+    },
+    {
+        "name": "FileCopyMoveManager",
+        "project_folder": "File Copy Move Manager",
+        "prompt": (
+            "Minimalist flat app icon, dark charcoal background #16100f, "
+            "two stacked glowing document pages in soft coral rose #ff6b8b, the back "
+            "page a faded duplicate copy, with a bold forward arrow carrying the "
+            "front page to the right, representing copying and moving files, "
+            "clean vector style, no text, no folder, square icon, sharp edges, "
+            "modern Windows app icon design, 512x512"
+        ),
+    },
+    {
+        "name": "IconMaker",
+        "project_folder": "IconMaker",
+        "prompt": (
+            "Minimalist flat app icon, dark charcoal background #0f140a, "
+            "a glowing electric lime green #b6ff00 blacksmith anvil with a small "
+            "rounded-square app icon tile being forged on top and bright sparks "
+            "flying, representing an icon generator, clean vector style, no text, "
+            "square icon, sharp edges, modern Windows app icon design, 512x512"
+        ),
+    },
 ]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -523,7 +570,7 @@ def find_projects_missing_icon(projects_root: Path = PROJECTS_ROOT) -> list[str]
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 NEW_APPS = {
-    "TodoList",
+    "FileCopyMoveManager",
 }
 
 
