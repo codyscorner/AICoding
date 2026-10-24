@@ -226,3 +226,71 @@ def test_clear_cache(tmp_path, dd):
     dd.scan(str(src))
     dd.clear_cache()
     assert dd.cache_stats() == {"files": 0, "hashes": 0}
+
+
+def test_recycle_bin_and_system_folders_skipped(tmp_path, dd):
+    src = tmp_path / "src"
+    _write(src / "a.jpg", b"pic")
+    _write(src / "$RECYCLE.BIN" / "S-1-5-21-1" / "$IABC.jpg", b"pic")
+    _write(src / "RECYCLER" / "x.jpg", b"pic")
+    _write(src / "System Volume Information" / "y.jpg", b"pic")
+    _write(src / "keep" / "b.jpg", b"pic")
+    res = dd.scan(str(src))
+    assert res.total_files == 2
+    assert [os.path.basename(e.path) for _, e in res.to_remove] == ["b.jpg"]
+
+
+def test_migration_forgets_recycle_bin_rows(tmp_path):
+    import sqlite3
+    import hash_db
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(hash_db.SCHEMA_V1)
+    conn.execute("PRAGMA user_version = 1")
+    conn.executemany("INSERT INTO files(path, size, mtime) VALUES (?, 1, 0)",
+                     [(r"M:\$RECYCLE.BIN\S-1-5-21-402136527\$ID4BDC7.jpg",),
+                      (r"M:\System Volume Information\tracking.log",),
+                      (r"M:\Photos\keep.jpg",)])
+    conn.commit()
+    conn.close()
+    conn = hash_db.connect(path)
+    assert [r[0] for r in conn.execute("SELECT path FROM files")] == [r"M:\Photos\keep.jpg"]
+    conn.close()
+
+
+def test_max_size_ignores_big_files_but_keeps_their_cache(tmp_path, dd, hash_calls):
+    src = tmp_path / "src"
+    _write(src / "small1.jpg", b"s" * 100)
+    _write(src / "small2.jpg", b"s" * 100)
+    _write(src / "model1.safetensors", b"m" * 5000)
+    _write(src / "model2.safetensors", b"m" * 5000)
+
+    res = dd.scan(str(src), max_size=1000)
+    assert len(hash_calls) == 2                        # big files never hashed
+    assert [os.path.basename(e.path) for _, e in res.to_remove] == ["small2.jpg"]
+    assert res.total_files == 2
+
+    res2 = dd.rescan_keep_rule(res, "Newest")          # limit survives a re-rank
+    assert all(e.size <= 1000 for _, e in res2.to_remove)
+
+    hash_calls.clear()
+    res = dd.scan(str(src))                            # no limit: only the big ones need hashing
+    assert len(hash_calls) == 2
+    assert len(res.to_remove) == 2
+
+    hash_calls.clear()
+    res = dd.scan(str(src), max_size=1000)             # limit back on: big rows kept in cache, ignored
+    assert hash_calls == []
+    assert len(res.to_remove) == 1
+    assert dd.cache_stats()["hashes"] == 4
+
+
+def test_max_size_in_compare_mode(tmp_path, dd):
+    a, b = tmp_path / "A", tmp_path / "B"
+    _write(a / "big.bin", b"b" * 5000)
+    _write(a / "pic.jpg", b"p" * 10)
+    _write(b / "big copy.bin", b"b" * 5000)
+    _write(b / "pic copy.jpg", b"p" * 10)
+    res = dd.scan_compare(str(a), str(b), max_size=1000)
+    assert [os.path.basename(e.path) for _, e in res.to_remove] == ["pic copy.jpg"]
+    assert res.total_files == 1

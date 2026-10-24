@@ -193,6 +193,25 @@ class MainWindow(QMainWindow):
         workers_row.addStretch()
         opt_layout.addLayout(workers_row)
 
+        size_row = QHBoxLayout()
+        self.max_size_check = QCheckBox("Skip files larger than")
+        self.max_size_check.setChecked(True)
+        self.max_size_check.setToolTip("Big files (models, .safetensors, disk images) are ignored: "
+                                       "not hashed, never moved or deleted")
+        size_row.addWidget(self.max_size_check)
+        self.max_size_spin = QSpinBox()
+        self.max_size_spin.setRange(1, 10_000_000)
+        self.max_size_spin.setValue(100)
+        self.max_size_spin.setSuffix(" MB")
+        self.max_size_spin.setFixedWidth(130)
+        self.max_size_check.toggled.connect(self.max_size_spin.setEnabled)
+        size_row.addWidget(self.max_size_spin)
+        size_lbl = QLabel("(recycle bins and System Volume Information are always skipped)")
+        size_lbl.setObjectName("subtitle")
+        size_row.addWidget(size_lbl)
+        size_row.addStretch()
+        opt_layout.addLayout(size_row)
+
         cache_row = QHBoxLayout()
         cache_row.addWidget(QLabel("Hash cache:"))
         self.cache_label = QLabel()
@@ -310,6 +329,9 @@ class MainWindow(QMainWindow):
         self.algorithm_combo.setCurrentText(self.config.get('algorithm', 'MD5'))
         self.keep_rule_combo.setCurrentText(self.config.get('keep_rule', KEEP_RULES[0]))
         self.csv_report_check.setChecked(self.config.get('csv_report', False))
+        self.max_size_check.setChecked(self.config.get('max_size_enabled', True))
+        self.max_size_spin.setValue(self.config.get('max_size_mb', 100))
+        self.max_size_spin.setEnabled(self.max_size_check.isChecked())
         if self.config.get('compare_mode', False):
             self.compare_radio.setChecked(True)
             self._on_mode_changed(False)
@@ -323,6 +345,8 @@ class MainWindow(QMainWindow):
         self.config.set('algorithm', self.algorithm_combo.currentText())
         self.config.set('keep_rule', self.keep_rule_combo.currentText())
         self.config.set('csv_report', self.csv_report_check.isChecked())
+        self.config.set('max_size_enabled', self.max_size_check.isChecked())
+        self.config.set('max_size_mb', self.max_size_spin.value())
         self.config.set('compare_mode', self.compare_radio.isChecked())
         self.config.save()
 
@@ -389,18 +413,22 @@ class MainWindow(QMainWindow):
             target=self._scan_worker,
             args=(source, target, self.recursive_check.isChecked(),
                   ALGORITHMS[self.algorithm_combo.currentText()],
-                  self.keep_rule_combo.currentText(), compare_mode),
+                  self.keep_rule_combo.currentText(), compare_mode,
+                  self.max_size_spin.value() * 1024 * 1024 if self.max_size_check.isChecked() else 0),
             daemon=True
         )
         thread.start()
         self._poll_timer.start()
 
-    def _scan_worker(self, source: str, target: str, recursive: bool, algorithm: str, keep_rule: str, compare_mode: bool):
+    def _scan_worker(self, source: str, target: str, recursive: bool, algorithm: str, keep_rule: str,
+                     compare_mode: bool, max_size: int):
         try:
             if compare_mode:
-                scan_result = self._deduplicator.scan_compare(source, target, recursive=recursive, algorithm=algorithm)
+                scan_result = self._deduplicator.scan_compare(source, target, recursive=recursive,
+                                                              algorithm=algorithm, max_size=max_size)
             else:
-                scan_result = self._deduplicator.scan(source, recursive=recursive, algorithm=algorithm, keep_rule=keep_rule)
+                scan_result = self._deduplicator.scan(source, recursive=recursive, algorithm=algorithm,
+                                                      keep_rule=keep_rule, max_size=max_size)
 
             if self._cancel_requested:
                 self._message_queue.put(('cancelled', None))

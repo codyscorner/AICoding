@@ -27,6 +27,9 @@ BUFFER_SIZE = 1024 * 1024
 # Folder duplicates are moved into; never scanned
 DUPES_DIR = "Dupes"
 
+# Windows system folders: never scanned (recycle bins hold deleted copies, not real duplicates)
+SKIP_DIRS = {"$recycle.bin", "recycler", "system volume information"}
+
 # Hash algorithms offered in the UI (both are stdlib — no extra dependency)
 ALGORITHMS = {"MD5": "md5", "BLAKE2b": "blake2b"}
 
@@ -90,6 +93,7 @@ class ScanResult:
     to_remove: List[Tuple[str, FileEntry]] = field(default_factory=list)   # (hash, entry) for every rank > 1 row
     algorithm: str = "md5"
     compare_mode: bool = False
+    max_size: int = 0                    # bytes; 0 = no limit (bigger files are ignored, not hashed)
 
 
 def _compute_file_hash(file_path: str, algorithm: str, cancel_check: Optional[Callable[[], bool]]) -> str:
@@ -185,7 +189,7 @@ class FileDeduplicator:
                             if e.is_symlink() or (is_junction and is_junction()):
                                 continue                      # never follow links (loops)
                             if e.is_dir(follow_symlinks=False):
-                                if recursive and e.name != DUPES_DIR:
+                                if recursive and e.name != DUPES_DIR and e.name.lower() not in SKIP_DIRS:
                                     stack.append(full)
                             elif e.is_file(follow_symlinks=False):
                                 if os.path.normcase(full) in self._db_files:
@@ -259,16 +263,17 @@ class FileDeduplicator:
     # ---------- scan ----------
 
     def scan(self, source_folder: str, recursive: bool = True, algorithm: str = "md5",
-             keep_rule: str = "First (alphabetical)",
+             keep_rule: str = "First (alphabetical)", max_size: int = 0,
              progress_start: int = 0, progress_end: int = 70) -> ScanResult:
-        """Scan one folder for duplicates without touching any files"""
+        """Scan one folder for duplicates without touching any files. max_size (bytes, 0 = no
+        limit) ignores bigger files."""
         if not os.path.exists(source_folder):
             raise ValueError(f"Source folder does not exist: {source_folder}")
-        return self._scan([(source_folder, 0)], recursive, algorithm, keep_rule, False,
+        return self._scan([(source_folder, 0)], recursive, algorithm, keep_rule, False, max_size,
                           progress_start, progress_end)
 
     def scan_compare(self, reference_folder: str, target_folder: str, recursive: bool = True,
-                      algorithm: str = "md5") -> ScanResult:
+                      algorithm: str = "md5", max_size: int = 0) -> ScanResult:
         """Scan target_folder (B) for files that already exist (by content) in reference_folder (A).
         reference_folder is only ever read, never modified."""
         if not os.path.exists(reference_folder):
@@ -280,11 +285,12 @@ class FileDeduplicator:
             raise ValueError("The reference and target folders overlap (one is inside the other). "
                              "Pick two separate folders.")
         return self._scan([(reference_folder, 0), (target_folder, 1)], recursive, algorithm,
-                          KEEP_RULES[0], True, 0, 70)
+                          KEEP_RULES[0], True, max_size, 0, 70)
 
     def _scan(self, folders, recursive: bool, algorithm: str, keep_rule: str, compare: bool,
-              progress_start: int, progress_end: int) -> ScanResult:
-        empty = ScanResult({}, {}, {}, 0, 0, keep_rule, algorithm=algorithm, compare_mode=compare)
+              max_size: int, progress_start: int, progress_end: int) -> ScanResult:
+        empty = ScanResult({}, {}, {}, 0, 0, keep_rule, algorithm=algorithm, compare_mode=compare,
+                           max_size=max_size)
         conn = hash_db.connect(self.db_path)
         try:
             hash_db.begin_run(conn)
@@ -307,9 +313,12 @@ class FileDeduplicator:
             self._log_status(f"Database: {counts['new']:,} new, {counts['changed']:,} changed, "
                              f"{counts['unchanged']:,} unchanged file(s)")
 
-            cands = hash_db.candidates(conn, algorithm, compare)
+            oversize = hash_db.oversize_count(conn, max_size)
+            if oversize:
+                self._log_status(f"Ignoring {oversize:,} file(s) larger than {max_size / 1024 / 1024:,.0f} MB")
+            cands = hash_db.candidates(conn, algorithm, compare, max_size)
             pending = [r for r in cands if not r["cached"]]
-            total_listed = hash_db.run_count(conn)
+            total_listed = hash_db.run_count(conn, max_size=max_size)
             self._log_status(
                 f"Size pre-filter: {len(cands):,} of {total_listed:,} file(s) share a size with another file; "
                 f"{len(cands) - len(pending):,} hash(es) reused from the cache, {len(pending):,} to hash"
@@ -324,8 +333,8 @@ class FileDeduplicator:
                 return empty
 
             hash_errors.update(walk_errors)
-            total = hash_db.run_count(conn, 1) if compare else total_listed
-            result = self._build_result(conn, algorithm, keep_rule, compare, total, hash_errors)
+            total = hash_db.run_count(conn, 1, max_size) if compare else total_listed
+            result = self._build_result(conn, algorithm, keep_rule, compare, max_size, total, hash_errors)
         finally:
             conn.close()
 
@@ -337,13 +346,13 @@ class FileDeduplicator:
                              f"{len(result.to_remove):,} duplicate file(s)")
         return result
 
-    def _build_result(self, conn, algorithm: str, keep_rule: str, compare: bool,
+    def _build_result(self, conn, algorithm: str, keep_rule: str, compare: bool, max_size: int,
                       total_files: int, hash_errors: Dict[str, str]) -> ScanResult:
         """Turn the ranked SQL rows into groups: rank 1 = primary, remove = 1 -> to_remove"""
         groups: Dict[str, List[FileEntry]] = {}
         primary_map: Dict[str, FileEntry] = {}
         to_remove: List[Tuple[str, FileEntry]] = []
-        for r in hash_db.ranked(conn, algorithm, keep_rule, compare):
+        for r in hash_db.ranked(conn, algorithm, keep_rule, compare, max_size):
             entry = FileEntry(r["path"], r["size"], r["mtime"], r["hash"], file_id=r["id"])
             if r["dup_rank"] == 1:
                 primary_map[r["hash"]] = entry
@@ -353,14 +362,14 @@ class FileDeduplicator:
                 to_remove.append((r["hash"], entry))
         unique_count = total_files - len(to_remove) - len(hash_errors)
         return ScanResult(groups, primary_map, hash_errors, total_files, max(unique_count, 0), keep_rule,
-                          to_remove, algorithm, compare)
+                          to_remove, algorithm, compare, max_size)
 
     def rescan_keep_rule(self, scan_result: ScanResult, keep_rule: str) -> ScanResult:
         """Re-rank the same run under a new keep rule: one SQL query, no re-hashing"""
         conn = hash_db.connect(self.db_path)
         try:
             return self._build_result(conn, scan_result.algorithm, keep_rule, scan_result.compare_mode,
-                                      scan_result.total_files, scan_result.hash_errors)
+                                      scan_result.max_size, scan_result.total_files, scan_result.hash_errors)
         finally:
             conn.close()
 

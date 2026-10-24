@@ -9,7 +9,7 @@ from PyQt6.QtGui import QIcon
 from config import ConfigManager
 from ui.main_window import MainWindow
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 
 
 def get_config_file() -> Path:

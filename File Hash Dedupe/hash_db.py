@@ -42,7 +42,14 @@ CREATE TABLE run_files (
 );
 """
 
-MIGRATIONS = [SCHEMA_V1]      # index i upgrades user_version i -> i+1
+SCHEMA_V2 = """
+DELETE FROM files
+WHERE instr(lower(path), '\\$recycle.bin\\') > 0
+   OR instr(lower(path), '\\recycler\\') > 0
+   OR instr(lower(path), '\\system volume information\\') > 0;
+"""                           # v1.4.2: system folders are no longer scanned; forget rows already listed
+
+MIGRATIONS = [SCHEMA_V1, SCHEMA_V2]      # index i upgrades user_version i -> i+1
 
 # Keep rule -> ORDER BY inside the ROW_NUMBER() window (first row = the copy that is kept).
 # Only these fixed strings are ever put into the SQL text.
@@ -141,20 +148,22 @@ def prune_folder(conn, folder: str) -> int:
 
 # ── hashing ───────────────────────────────────────────────────────────────────
 
-def candidates(conn, algo: str, compare: bool):
+def candidates(conn, algo: str, compare: bool, max_size: int = 0):
     """Size pre-filter, in SQL: files of this run whose size is shared with another file
-    (in compare mode: shared between side A and side B). `cached` = already hashed with algo."""
+    (in compare mode: shared between side A and side B). `cached` = already hashed with algo.
+    max_size > 0 leaves out files bigger than that many bytes (they stay listed and cached)."""
     return conn.execute("""
         WITH run AS (
             SELECT f.id, f.path, f.size, r.side
-            FROM run_files r JOIN files f ON f.id = r.file_id),
+            FROM run_files r JOIN files f ON f.id = r.file_id
+            WHERE :max_size = 0 OR f.size <= :max_size),
         shared AS (
             SELECT size FROM run GROUP BY size
             HAVING COUNT(*) > 1 AND (:compare = 0 OR (MIN(side) = 0 AND MAX(side) = 1)))
         SELECT run.id, run.path, run.size, run.side,
                EXISTS (SELECT 1 FROM hashes h WHERE h.file_id = run.id AND h.algo = :algo) AS cached
         FROM run WHERE run.size IN (SELECT size FROM shared)
-        ORDER BY run.path""", {"algo": algo, "compare": int(compare)}).fetchall()
+        ORDER BY run.path""", {"algo": algo, "compare": int(compare), "max_size": int(max_size)}).fetchall()
 
 
 def save_hash(conn, file_id: int, algo: str, digest: str) -> None:
@@ -162,15 +171,25 @@ def save_hash(conn, file_id: int, algo: str, digest: str) -> None:
                  (file_id, algo, digest, _now()))
 
 
-def run_count(conn, side=None) -> int:
-    if side is None:
-        return conn.execute("SELECT COUNT(*) FROM run_files").fetchone()[0]
-    return conn.execute("SELECT COUNT(*) FROM run_files WHERE side = ?", (side,)).fetchone()[0]
+def run_count(conn, side=None, max_size: int = 0) -> int:
+    """Files in this run (optionally one side), counting only those within max_size when it is set."""
+    return conn.execute("""
+        SELECT COUNT(*) FROM run_files r JOIN files f ON f.id = r.file_id
+        WHERE (:side IS NULL OR r.side = :side) AND (:max_size = 0 OR f.size <= :max_size)""",
+        {"side": side, "max_size": int(max_size)}).fetchone()[0]
+
+
+def oversize_count(conn, max_size: int) -> int:
+    """Files in this run skipped because they are bigger than max_size bytes."""
+    if not max_size:
+        return 0
+    return conn.execute("""SELECT COUNT(*) FROM run_files r JOIN files f ON f.id = r.file_id
+                           WHERE f.size > ?""", (int(max_size),)).fetchone()[0]
 
 
 # ── ranking ───────────────────────────────────────────────────────────────────
 
-def ranked(conn, algo: str, keep_rule: str, compare: bool):
+def ranked(conn, algo: str, keep_rule: str, compare: bool, max_size: int = 0):
     """Every copy in a duplicate group, ranked with ROW_NUMBER(). `remove` = 1 marks the rows
     to move/delete: rank > 1 in single-folder mode; in compare mode only target-side (B) rows,
     and rank 1 is always a reference (A) file because side sorts first.
@@ -185,14 +204,16 @@ def ranked(conn, algo: str, keep_rule: str, compare: bool):
                    MAX(r.side) OVER (PARTITION BY h.hash, f.size) AS max_side
             FROM run_files r
             JOIN files f  ON f.id = r.file_id
-            JOIN hashes h ON h.file_id = f.id AND h.algo = :algo)
+            JOIN hashes h ON h.file_id = f.id AND h.algo = :algo
+            WHERE :max_size = 0 OR f.size <= :max_size)
         SELECT id, path, size, mtime, hash, side, dup_rank, copies,
                CASE WHEN dup_rank > 1 AND side = :remove_side THEN 1 ELSE 0 END AS remove
         FROM ranked
         WHERE copies > 1
           AND (:compare = 0 OR (min_side = 0 AND max_side = 1 AND (dup_rank = 1 OR side = 1)))
         ORDER BY size DESC, hash, dup_rank""",
-        {"algo": algo, "compare": int(compare), "remove_side": 1 if compare else 0}).fetchall()
+        {"algo": algo, "compare": int(compare), "remove_side": 1 if compare else 0,
+         "max_size": int(max_size)}).fetchall()
 
 
 # ── upkeep ────────────────────────────────────────────────────────────────────

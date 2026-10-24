@@ -9,7 +9,8 @@ A desktop application that finds and removes duplicate files based on content ha
 - **Fast Parallel Hashing**: Configurable parallel workers for high-speed file hashing
 - **Content-Based Detection**: Identifies duplicates by file content, not just filename
 - **Two Dedupe Modes**: Move duplicates to a `Dupes` subfolder, or permanently delete them
-- **Recursive Scanning**: Option to scan subdirectories
+- **Recursive Scanning**: Option to scan subdirectories (recycle bins and System Volume Information always skipped)
+- **Maximum File Size**: skip files larger than a set size (default 100 MB) so big model files are never hashed
 - **Progress Tracking**: Real-time progress bar and status log
 - **Cancellable**: Cancel mid-run at any time
 
@@ -41,6 +42,11 @@ pyinstaller FileHashDedupe.spec --clean --noconfirm
 ```
 
 ## Version History
+
+### v1.4.2
+- Recycle bins (`$RECYCLE.BIN`, `RECYCLER`) and `System Volume Information` are never scanned; rows already in the hash cache from those folders are removed when the database opens (schema v2)
+- New option "Skip files larger than ___ MB" (on, 100 MB by default): bigger files (models, .safetensors, disk images) are not hashed and never moved or deleted. The limit is applied in the SQL queries, so those files stay listed and any cached hashes for them are kept for when the limit is raised
+- Status log reports how many files were ignored for size
 
 ### v1.4.1
 - Options rows no longer overlap or clip at 125-150% Windows display scaling: the window's minimum height now comes from its layout instead of a hard-coded 760 px, so it can't be shrunk below what the controls need
