@@ -117,7 +117,7 @@ QLabel#spin_label {{
 class StopwatchTimerApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Stopwatch & Timer v1.1.1")
+        self.setWindowTitle("Stopwatch & Timer v1.1.2")
         self.setMinimumSize(400, 600)
         self.resize(450, 650)
         self.setStyleSheet(STYLESHEET)
@@ -273,7 +273,7 @@ class StopwatchTimerApp(QMainWindow):
         # Spinbox row
         spin_layout = QHBoxLayout()
         spin_layout.setSpacing(10)
-        for text, attr, max_val in [("HH", "tmr_hh", 99), ("MM", "tmr_mm", 59), ("SS", "tmr_ss", 59)]:
+        for text, attr, max_val in [("Hours=HH", "tmr_hh", 99), ("Minutes=MM", "tmr_mm", 59), ("Seconds=SS", "tmr_ss", 59)]:
             col = QVBoxLayout()
             lbl = QLabel(text)
             lbl.setObjectName("spin_label")
