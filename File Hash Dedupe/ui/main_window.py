@@ -21,6 +21,10 @@ from config import ConfigManager
 from hasher import FileDeduplicator, ScanResult, ALGORITHMS, KEEP_RULES, write_csv_report
 from ui.styles import STYLESHEET, COLORS
 from ui.preview_dialog import PreviewDialog
+from filetypes import PRESETS
+
+# Order of the File Types tick boxes ("All Files" = nothing ticked)
+TYPE_PRESETS = ["Images", "Videos", "Audio", "Documents", "Data", "Archives", "Code"]
 
 
 def _cleanup_all_children():
@@ -146,6 +150,27 @@ class MainWindow(QMainWindow):
         layout.addWidget(target_group)
         target_group.setVisible(False)
 
+        # File types: presets shared with Burn List Creator / FolderSync / File Copy Move Manager
+        types_group = QGroupBox("File Types  (nothing ticked = all types)")
+        types_group.setToolTip("Only the ticked types are hashed and deduped. Hover a box to see its extensions.")
+        types_grid = QGridLayout(types_group)
+        types_grid.setContentsMargins(14, 18, 14, 14)
+        types_grid.setHorizontalSpacing(24)
+        types_grid.setVerticalSpacing(12)
+        self.type_checks = {}
+        for i, name in enumerate(TYPE_PRESETS):
+            check = QCheckBox(name)
+            check.setToolTip(PRESETS[name])
+            types_grid.addWidget(check, i // 4, i % 4)
+            self.type_checks[name] = check
+        # Extra masks fill the empty 4th slot of the second row
+        self.extra_mask_edit = QLineEdit()
+        self.extra_mask_edit.setPlaceholderText("also: *.psd, blend")
+        self.extra_mask_edit.setToolTip("Extra masks, comma separated: *.psd, blend, IMG_*.jpg")
+        types_grid.addWidget(self.extra_mask_edit, 1, 3)
+        types_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        layout.addWidget(types_group)
+
         # Options
         opt_group = QGroupBox("Options")
         opt_layout = QVBoxLayout(opt_group)
@@ -253,7 +278,7 @@ class MainWindow(QMainWindow):
         status_layout = QVBoxLayout(status_group)
         self.status_list = QListWidget()
         status_layout.addWidget(self.status_list)
-        status_group.setMinimumHeight(110)
+        status_group.setMinimumHeight(90)
         layout.addWidget(status_group, stretch=1)
 
     def _refresh_cache_label(self):
@@ -332,6 +357,10 @@ class MainWindow(QMainWindow):
         self.max_size_check.setChecked(self.config.get('max_size_enabled', True))
         self.max_size_spin.setValue(self.config.get('max_size_mb', 100))
         self.max_size_spin.setEnabled(self.max_size_check.isChecked())
+        for name in self.config.get('file_types', []):
+            if name in self.type_checks:
+                self.type_checks[name].setChecked(True)
+        self.extra_mask_edit.setText(self.config.get('extra_mask', ''))
         if self.config.get('compare_mode', False):
             self.compare_radio.setChecked(True)
             self._on_mode_changed(False)
@@ -347,6 +376,8 @@ class MainWindow(QMainWindow):
         self.config.set('csv_report', self.csv_report_check.isChecked())
         self.config.set('max_size_enabled', self.max_size_check.isChecked())
         self.config.set('max_size_mb', self.max_size_spin.value())
+        self.config.set('file_types', [n for n, c in self.type_checks.items() if c.isChecked()])
+        self.config.set('extra_mask', self.extra_mask_edit.text().strip())
         self.config.set('compare_mode', self.compare_radio.isChecked())
         self.config.save()
 
@@ -414,21 +445,32 @@ class MainWindow(QMainWindow):
             args=(source, target, self.recursive_check.isChecked(),
                   ALGORITHMS[self.algorithm_combo.currentText()],
                   self.keep_rule_combo.currentText(), compare_mode,
-                  self.max_size_spin.value() * 1024 * 1024 if self.max_size_check.isChecked() else 0),
+                  self.max_size_spin.value() * 1024 * 1024 if self.max_size_check.isChecked() else 0,
+                  self._file_type_selection()),
             daemon=True
         )
         thread.start()
         self._poll_timer.start()
 
+    def _file_type_selection(self) -> tuple:
+        """Ticked presets plus the extra mask; empty = all file types"""
+        selection = [n for n, c in self.type_checks.items() if c.isChecked()]
+        mask = self.extra_mask_edit.text().strip()
+        if mask:
+            selection.append(mask)
+        return tuple(selection)
+
     def _scan_worker(self, source: str, target: str, recursive: bool, algorithm: str, keep_rule: str,
-                     compare_mode: bool, max_size: int):
+                     compare_mode: bool, max_size: int, file_types: tuple):
         try:
             if compare_mode:
                 scan_result = self._deduplicator.scan_compare(source, target, recursive=recursive,
-                                                              algorithm=algorithm, max_size=max_size)
+                                                              algorithm=algorithm, max_size=max_size,
+                                                              file_types=file_types)
             else:
                 scan_result = self._deduplicator.scan(source, recursive=recursive, algorithm=algorithm,
-                                                      keep_rule=keep_rule, max_size=max_size)
+                                                      keep_rule=keep_rule, max_size=max_size,
+                                                      file_types=file_types)
 
             if self._cancel_requested:
                 self._message_queue.put(('cancelled', None))

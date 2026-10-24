@@ -10,6 +10,7 @@ A desktop application that finds and removes duplicate files based on content ha
 - **Content-Based Detection**: Identifies duplicates by file content, not just filename
 - **Two Dedupe Modes**: Move duplicates to a `Dupes` subfolder, or permanently delete them
 - **Recursive Scanning**: Option to scan subdirectories (recycle bins and System Volume Information always skipped)
+- **File Types**: dedupe only Images, Videos, Data... (presets shared with Burn List Creator / FolderSync / File Copy Move Manager) plus custom masks
 - **Maximum File Size**: skip files larger than a set size (default 100 MB) so big model files are never hashed
 - **Progress Tracking**: Real-time progress bar and status log
 - **Cancellable**: Cancel mid-run at any time
@@ -42,6 +43,12 @@ pyinstaller FileHashDedupe.spec --clean --noconfirm
 ```
 
 ## Version History
+
+### v1.5.0
+- New File Types box: tick Images / Videos / Audio / Documents / Data / Archives / Code (the same presets as Burn List Creator, FolderSync and File Copy Move Manager, in `filetypes.py`) and/or type extra masks (`*.psd, blend`). Only those types are hashed and deduped - AI model files and anything else unticked are ignored. Nothing ticked = every type, as before
+- The type filter is a SQL function (`type_ok(path)`) in the same queries as the size limit, so switching types never throws away cached hashes
+- "Which files need hashing" query rewritten with two narrow temp tables: ~16 s -> ~2 s on a million-file drive
+- Status log reports how many files were ignored for type and for size
 
 ### v1.4.2
 - Recycle bins (`$RECYCLE.BIN`, `RECYCLER`) and `System Volume Information` are never scanned; rows already in the hash cache from those folders are removed when the database opens (schema v2)

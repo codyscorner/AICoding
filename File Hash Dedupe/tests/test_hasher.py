@@ -294,3 +294,50 @@ def test_max_size_in_compare_mode(tmp_path, dd):
     res = dd.scan_compare(str(a), str(b), max_size=1000)
     assert [os.path.basename(e.path) for _, e in res.to_remove] == ["pic copy.jpg"]
     assert res.total_files == 1
+
+
+def test_file_types_only_dedupes_selected_types(tmp_path, dd, hash_calls):
+    src = tmp_path / "src"
+    _write(src / "a.jpg", b"img")
+    _write(src / "copy" / "a.JPG", b"img")              # extension match is case-insensitive
+    _write(src / "m1.safetensors", b"mod")
+    _write(src / "m2.safetensors", b"mod")
+    _write(src / "d1.json", b"dat")
+    _write(src / "d2.json", b"dat")
+
+    res = dd.scan(str(src), file_types=("Images",))
+    assert len(hash_calls) == 2                          # models + json never hashed
+    assert [os.path.basename(e.path) for _, e in res.to_remove] == ["a.JPG"]
+    assert res.total_files == 2
+
+    res2 = dd.rescan_keep_rule(res, "Shortest path")     # filter survives a re-rank
+    assert len(res2.to_remove) == 1 and res2.to_remove[0][1].path.lower().endswith(".jpg")
+
+    hash_calls.clear()
+    res = dd.scan(str(src), file_types=("Images", "Data"))
+    assert len(hash_calls) == 2                          # only the json pair is new work
+    assert sorted(os.path.basename(e.path) for _, e in res.to_remove) == ["a.JPG", "d2.json"]
+
+
+def test_file_types_extra_mask_and_all(tmp_path, dd):
+    src = tmp_path / "src"
+    _write(src / "x.psd", b"psd")
+    _write(src / "y.psd", b"psd")
+    _write(src / "a.txt", b"txt")
+    _write(src / "b.txt", b"txt")
+    res = dd.scan(str(src), file_types=("*.psd",))
+    assert [os.path.basename(e.path) for _, e in res.to_remove] == ["y.psd"]
+    res = dd.scan(str(src), file_types=("Images",))      # .psd is in the Images preset
+    assert len(res.to_remove) == 1
+    res = dd.scan(str(src))                              # nothing selected = every type
+    assert len(res.to_remove) == 2
+
+
+def test_file_types_in_compare_mode(tmp_path, dd):
+    a, b = tmp_path / "A", tmp_path / "B"
+    _write(a / "p.png", b"png")
+    _write(a / "m.safetensors", b"safe")
+    _write(b / "p copy.png", b"png")
+    _write(b / "m copy.safetensors", b"safe")
+    res = dd.scan_compare(str(a), str(b), file_types=("Images",))
+    assert [os.path.basename(e.path) for _, e in res.to_remove] == ["p copy.png"]
