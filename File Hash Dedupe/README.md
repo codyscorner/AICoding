@@ -42,6 +42,10 @@ pyinstaller FileHashDedupe.spec --clean --noconfirm
 
 ## Version History
 
+### v1.4.1
+- Options rows no longer overlap or clip at 125-150% Windows display scaling: the window's minimum height now comes from its layout instead of a hard-coded 760 px, so it can't be shrunk below what the controls need
+- More space between Options rows (16 px) and a taller Clear Cache button
+
 ### v1.4.0
 - Scan rewritten on SQLite (`hash_db.py`): pass 1 lists every file (one row per full path), the size pre-filter runs as a SQL query, pass 2 hashes only candidates without a cached hash, and duplicates are picked with `ROW_NUMBER()` - rank 1 kept, rank > 1 removed
 - Hash cache persists between runs, per algorithm (MD5 and BLAKE2b cached separately); a file whose size or modified time changed is re-hashed; moved/deleted duplicates and files that vanished are dropped from the cache

@@ -85,8 +85,9 @@ QSpinBox {{
     min-height: 22px;
 }}
 QPushButton#small_btn {{
-    padding: 4px 14px;
+    padding: 6px 16px;
     font-size: 9pt;
+    min-height: 20px;
 }}
 QComboBox {{
     background-color: {COLORS['bg_light']};

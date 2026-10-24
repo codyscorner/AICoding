@@ -54,7 +54,9 @@ class MainWindow(QMainWindow):
         self._pending_compare_mode = False
 
         self.setWindowTitle(f"File Hash Dedupe v{self.version}")
-        self.setMinimumSize(750, 760)
+        # Width only: the minimum height comes from the layout, so the window can never be
+        # shrunk below what the controls need (a hard-coded height let rows overlap at 125-150% scaling)
+        self.setMinimumWidth(750)
         self.setStyleSheet(STYLESHEET)
 
         geom = self.config.window_geometry
@@ -147,8 +149,8 @@ class MainWindow(QMainWindow):
         # Options
         opt_group = QGroupBox("Options")
         opt_layout = QVBoxLayout(opt_group)
-        opt_layout.setContentsMargins(12, 16, 12, 12)
-        opt_layout.setSpacing(12)
+        opt_layout.setContentsMargins(14, 18, 14, 14)
+        opt_layout.setSpacing(16)
         # Never let the stretchy Status box squeeze these rows together
         opt_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.recursive_check = QCheckBox("Search subfolders recursively")
@@ -232,7 +234,7 @@ class MainWindow(QMainWindow):
         status_layout = QVBoxLayout(status_group)
         self.status_list = QListWidget()
         status_layout.addWidget(self.status_list)
-        status_group.setMinimumHeight(120)
+        status_group.setMinimumHeight(110)
         layout.addWidget(status_group, stretch=1)
 
     def _refresh_cache_label(self):
