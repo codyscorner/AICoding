@@ -11,6 +11,8 @@ import os
 import csv
 import hashlib
 import shutil
+import stat
+import time
 from typing import List, Dict, Tuple, Optional, Callable
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait
@@ -55,6 +57,20 @@ def _inside(child: str, parent: str) -> bool:
     return c == p or c.startswith(p.rstrip("\\/") + os.sep)
 
 
+def is_read_only(path: str) -> bool:
+    """True when the file has the Windows read-only attribute (os.unlink then fails with
+    WinError 5 'Access is denied' even though nothing has the file open)."""
+    try:
+        attrs = os.stat(long_path(path)).st_file_attributes
+    except (OSError, AttributeError):                 # gone, or not Windows
+        return False
+    return bool(attrs & stat.FILE_ATTRIBUTE_READONLY)
+
+
+def count_read_only(paths) -> int:
+    return sum(1 for p in paths if is_read_only(p))
+
+
 class _Cancelled(Exception):
     """Raised inside a hash when cancel is requested."""
 
@@ -96,6 +112,7 @@ class ScanResult:
     compare_mode: bool = False
     max_size: int = 0                    # bytes; 0 = no limit (bigger files are ignored, not hashed)
     file_types: tuple = ()               # preset names / masks; empty = all files
+    read_only_paths: frozenset = frozenset()   # group members with the read-only attribute
 
 
 def _compute_file_hash(file_path: str, algorithm: str, cancel_check: Optional[Callable[[], bool]]) -> str:
@@ -159,6 +176,8 @@ class FileDeduplicator:
         self.progress_callback = progress_callback
         self.cancel_check = cancel_check
         self.max_workers = max(1, max_workers)
+        self.checkpoint_files = 20000        # listing progress is saved every N files ...
+        self.checkpoint_seconds = 5.0        # ... or every N seconds, whichever comes first
         db = os.path.normcase(os.path.abspath(self.db_path))
         self._db_files = {db, db + "-wal", db + "-shm", db + "-journal"}
 
@@ -175,13 +194,17 @@ class FileDeduplicator:
 
     # ---------- listing ----------
 
-    def _walk(self, folder: str, recursive: bool, errors: Dict[str, str]) -> List[Tuple[str, int, float]]:
-        """Every file under folder as (full_path, size, mtime). Skips Dupes folders, links and the
-        app's own database files."""
-        entries: List[Tuple[str, int, float]] = []
-        stack = [folder]
+    def _walk(self, conn, recursive: bool, errors: Dict[str, str]) -> None:
+        """List every file of the folders in the walk queue into the `listing` table, as
+        (full_path, size, mtime, side). Skips Dupes/system folders, links and the app's own
+        database files. Progress is checkpointed to the database every few seconds and on
+        cancel, so a cancelled or crashed listing carries on from the folders still queued."""
+        stack = hash_db.walk_queue(conn)
+        done = sum(hash_db.listing_counts(conn).values())
+        buffer: List[Tuple[str, int, float, int]] = []
+        last_checkpoint = time.monotonic()
         while stack and not self._cancelled():
-            current = stack.pop()
+            current, side = stack.pop()
             try:
                 with os.scandir(long_path(current)) as it:
                     for e in it:
@@ -192,19 +215,25 @@ class FileDeduplicator:
                                 continue                      # never follow links (loops)
                             if e.is_dir(follow_symlinks=False):
                                 if recursive and e.name != DUPES_DIR and e.name.lower() not in SKIP_DIRS:
-                                    stack.append(full)
+                                    stack.append((full, side))
                             elif e.is_file(follow_symlinks=False):
                                 if os.path.normcase(full) in self._db_files:
                                     continue
                                 st = e.stat(follow_symlinks=False)
-                                entries.append((full, st.st_size, st.st_mtime))
-                                if len(entries) % 2000 == 0:
-                                    self._report_progress(0, 100, f"Listing: {len(entries):,} files")
+                                buffer.append((full, st.st_size, st.st_mtime, side))
+                                if (done + len(buffer)) % 2000 == 0:
+                                    self._report_progress(0, 100, f"Listing: {done + len(buffer):,} files")
                         except OSError as ex:
                             errors[full] = str(ex)
             except OSError as ex:
                 errors[current] = str(ex)
-        return entries
+            # `current` is fully listed: a checkpoint here never splits a folder
+            if len(buffer) >= self.checkpoint_files or time.monotonic() - last_checkpoint > self.checkpoint_seconds:
+                hash_db.checkpoint_walk(conn, buffer, stack)
+                done += len(buffer)
+                buffer = []
+                last_checkpoint = time.monotonic()
+        hash_db.checkpoint_walk(conn, buffer, stack)
 
     # ---------- hashing ----------
 
@@ -266,17 +295,20 @@ class FileDeduplicator:
 
     def scan(self, source_folder: str, recursive: bool = True, algorithm: str = "md5",
              keep_rule: str = "First (alphabetical)", max_size: int = 0, file_types=(),
+             resume: bool = False, job_extra: Optional[dict] = None,
              progress_start: int = 0, progress_end: int = 70) -> ScanResult:
         """Scan one folder for duplicates without touching any files. max_size (bytes, 0 = no
         limit) ignores bigger files; file_types (preset names such as "Images" and/or masks such
-        as "*.psd", empty = all) ignores other types."""
+        as "*.psd", empty = all) ignores other types. resume=True carries on an interrupted run of
+        the same folder from the step it reached (listing, hashing or applying)."""
         if not os.path.exists(source_folder):
             raise ValueError(f"Source folder does not exist: {source_folder}")
         return self._scan([(source_folder, 0)], recursive, algorithm, keep_rule, False, max_size,
-                          tuple(file_types or ()), progress_start, progress_end)
+                          tuple(file_types or ()), resume, job_extra, progress_start, progress_end)
 
     def scan_compare(self, reference_folder: str, target_folder: str, recursive: bool = True,
-                      algorithm: str = "md5", max_size: int = 0, file_types=()) -> ScanResult:
+                      algorithm: str = "md5", max_size: int = 0, file_types=(),
+                      resume: bool = False, job_extra: Optional[dict] = None) -> ScanResult:
         """Scan target_folder (B) for files that already exist (by content) in reference_folder (A).
         reference_folder is only ever read, never modified."""
         if not os.path.exists(reference_folder):
@@ -288,34 +320,91 @@ class FileDeduplicator:
             raise ValueError("The reference and target folders overlap (one is inside the other). "
                              "Pick two separate folders.")
         return self._scan([(reference_folder, 0), (target_folder, 1)], recursive, algorithm,
-                          KEEP_RULES[0], True, max_size, tuple(file_types or ()), 0, 70)
+                          KEEP_RULES[0], True, max_size, tuple(file_types or ()), resume, job_extra, 0, 70)
+
+    @staticmethod
+    def _job_key(folders, recursive: bool, compare: bool) -> dict:
+        """What has to match for an interrupted run to be resumed"""
+        return {"folders": [[os.path.normcase(os.path.abspath(f)), side] for f, side in folders],
+                "recursive": bool(recursive), "compare": bool(compare)}
+
+    def pending_job(self) -> Optional[dict]:
+        """The interrupted run, if any: {'settings': {...}, 'phase': ..., 'updated': ...}"""
+        conn = hash_db.connect(self.db_path)
+        try:
+            job = hash_db.get_job(conn)
+        finally:
+            conn.close()
+        return job if job and job["phase"] in hash_db.RESUMABLE_PHASES else None
+
+    def set_job_extra(self, **extra) -> None:
+        """Store UI settings (permanent delete etc.) with the run in progress, for the resume prompt"""
+        conn = hash_db.connect(self.db_path)
+        try:
+            job = hash_db.get_job(conn)
+            if job:
+                job["settings"].update(extra)
+                hash_db.set_job(conn, job["settings"], job["phase"])
+        finally:
+            conn.close()
+
+    def finish_job(self) -> None:
+        """The run completed, or was deliberately abandoned (review cancelled): nothing to resume"""
+        conn = hash_db.connect(self.db_path)
+        try:
+            hash_db.clear_job(conn)
+        finally:
+            conn.close()
 
     def _scan(self, folders, recursive: bool, algorithm: str, keep_rule: str, compare: bool,
-              max_size: int, file_types: tuple, progress_start: int, progress_end: int) -> ScanResult:
+              max_size: int, file_types: tuple, resume: bool, job_extra: Optional[dict],
+              progress_start: int, progress_end: int) -> ScanResult:
         empty = ScanResult({}, {}, {}, 0, 0, keep_rule, algorithm=algorithm, compare_mode=compare,
                            max_size=max_size, file_types=file_types)
+        key = self._job_key(folders, recursive, compare)
         conn = hash_db.connect(self.db_path)
         try:
             hash_db.set_type_filter(conn, Matcher(list(file_types)) if file_types else None)
-            hash_db.begin_run(conn)
             walk_errors: Dict[str, str] = {}
-            mode_str = "recursively" if recursive else "in root folder only"
-            for folder, side in folders:
-                name = ("reference folder (A)" if side == 0 else "target folder (B)") if compare else "source folder"
-                self._log_status(f"Listing {name} {mode_str}...")
-                entries = self._walk(os.path.abspath(folder), recursive, walk_errors)
-                if self._cancelled():
-                    self._log_status("Operation cancelled while listing files")
-                    return empty
-                self._log_status(f"Listed {len(entries):,} file(s) in {folder}")
-                hash_db.add_listing(conn, entries, side)
 
-            counts = hash_db.apply_listing(conn)
-            if recursive:
-                for folder, _ in folders:
-                    hash_db.prune_folder(conn, os.path.abspath(folder))
-            self._log_status(f"Database: {counts['new']:,} new, {counts['changed']:,} changed, "
-                             f"{counts['unchanged']:,} unchanged file(s)")
+            job = hash_db.get_job(conn)
+            phase = None
+            if resume and job and job["phase"] in hash_db.RESUMABLE_PHASES and \
+                    all(job["settings"].get(k) == v for k, v in key.items()):
+                phase = job["phase"]
+                settings = {**job["settings"], **(job_extra or {}), **key}
+                hash_db.set_job(conn, settings, phase)
+                self._log_status(f"Resuming the interrupted run (it had reached: {phase})")
+            if phase is None:
+                hash_db.begin_run(conn, [(os.path.abspath(f), side) for f, side in folders])
+                hash_db.set_job(conn, {**(job_extra or {}), **key}, "listing")
+                phase = "listing"
+
+            if phase == "listing":
+                mode_str = "recursively" if recursive else "in root folder only"
+                done_before = sum(hash_db.listing_counts(conn).values())
+                if done_before:
+                    self._log_status(f"Listing {mode_str} — continuing after {done_before:,} file(s) already listed...")
+                else:
+                    self._log_status(f"Listing {mode_str}...")
+                self._walk(conn, recursive, walk_errors)
+                if self._cancelled():
+                    listed = sum(hash_db.listing_counts(conn).values())
+                    self._log_status(f"Cancelled while listing — {listed:,} file(s) listed so far are saved; "
+                                     f"Find Duplicates continues from here")
+                    return empty
+                counts_by_side = hash_db.listing_counts(conn)
+                for folder, side in folders:
+                    self._log_status(f"Listed {counts_by_side.get(side, 0):,} file(s) in {folder}")
+
+                counts = hash_db.apply_listing(conn)
+                if recursive:
+                    for folder, _ in folders:
+                        hash_db.prune_folder(conn, os.path.abspath(folder))
+                self._log_status(f"Database: {counts['new']:,} new, {counts['changed']:,} changed, "
+                                 f"{counts['unchanged']:,} unchanged file(s)")
+                hash_db.set_phase(conn, "hashing")
+                phase = "hashing"
 
             excluded = hash_db.excluded_counts(conn, max_size)
             if file_types:
@@ -324,21 +413,27 @@ class FileDeduplicator:
             if excluded["size"]:
                 self._log_status(f"Ignoring {excluded['size']:,} file(s) larger than "
                                  f"{max_size / 1024 / 1024:,.0f} MB")
-            cands = hash_db.candidates(conn, algorithm, compare, max_size)
-            pending = [r for r in cands if not r["cached"]]
             total_listed = hash_db.run_count(conn, max_size=max_size)
-            self._log_status(
-                f"Size pre-filter: {len(cands):,} of {total_listed:,} file(s) share a size with another file; "
-                f"{len(cands) - len(pending):,} hash(es) reused from the cache, {len(pending):,} to hash"
-            )
 
-            if pending:
-                self._log_status(f"Hashing {len(pending):,} file(s) with {self.max_workers} workers "
-                                 f"({algorithm.upper()})...")
-            hash_errors = self._hash_pending(conn, pending, algorithm, progress_start, progress_end)
-            if self._cancelled():
-                self._log_status("Operation cancelled during hashing (hashes done so far are kept for next time)")
-                return empty
+            hash_errors: Dict[str, str] = {}
+            if phase == "hashing":
+                cands = hash_db.candidates(conn, algorithm, compare, max_size)
+                pending = [r for r in cands if not r["cached"]]
+                self._log_status(
+                    f"Size pre-filter: {len(cands):,} of {total_listed:,} file(s) share a size with another file; "
+                    f"{len(cands) - len(pending):,} hash(es) reused from the cache, {len(pending):,} to hash"
+                )
+                if pending:
+                    self._log_status(f"Hashing {len(pending):,} file(s) with {self.max_workers} workers "
+                                     f"({algorithm.upper()})...")
+                hash_errors = self._hash_pending(conn, pending, algorithm, progress_start, progress_end)
+                if self._cancelled():
+                    self._log_status("Cancelled while hashing — every hash finished so far is saved; "
+                                     "Find Duplicates continues from here")
+                    return empty
+                hash_db.set_phase(conn, "review")
+            else:
+                self._log_status("Listing and hashing were already finished — rebuilding the duplicate list")
 
             hash_errors.update(walk_errors)
             total = hash_db.run_count(conn, 1, max_size) if compare else total_listed
@@ -379,9 +474,11 @@ class FileDeduplicator:
         try:
             ft = scan_result.file_types
             hash_db.set_type_filter(conn, Matcher(list(ft)) if ft else None)
-            return self._build_result(conn, scan_result.algorithm, keep_rule, scan_result.compare_mode,
-                                      scan_result.max_size, ft, scan_result.total_files,
-                                      scan_result.hash_errors)
+            result = self._build_result(conn, scan_result.algorithm, keep_rule, scan_result.compare_mode,
+                                        scan_result.max_size, ft, scan_result.total_files,
+                                        scan_result.hash_errors)
+            result.read_only_paths = scan_result.read_only_paths   # same files, only the survivor changes
+            return result
         finally:
             conn.close()
 
@@ -402,16 +499,21 @@ class FileDeduplicator:
     # ---------- execute ----------
 
     def execute(self, scan_result: ScanResult, source_folder: str, permanent_delete: bool = False,
+                clear_read_only: bool = False,
                 progress_start: int = 70, progress_end: int = 100) -> Tuple[List[DedupeResult], int, int, int]:
-        """Move (or delete) every rank > 1 file of each duplicate group"""
-        return self._remove(scan_result, source_folder, permanent_delete, progress_start, progress_end)
+        """Move (or delete) every rank > 1 file of each duplicate group. clear_read_only removes the
+        read-only attribute from a duplicate just before deleting it."""
+        return self._remove(scan_result, source_folder, permanent_delete, clear_read_only,
+                            progress_start, progress_end)
 
     def execute_compare(self, scan_result: ScanResult, target_folder: str, permanent_delete: bool = False,
+                         clear_read_only: bool = False,
                          progress_start: int = 70, progress_end: int = 100) -> Tuple[List[DedupeResult], int, int, int]:
         """Move (or delete) target-folder files that match the reference folder. Reference is never touched."""
-        return self._remove(scan_result, target_folder, permanent_delete, progress_start, progress_end)
+        return self._remove(scan_result, target_folder, permanent_delete, clear_read_only,
+                            progress_start, progress_end)
 
-    def _remove(self, scan_result: ScanResult, folder: str, permanent_delete: bool,
+    def _remove(self, scan_result: ScanResult, folder: str, permanent_delete: bool, clear_read_only: bool,
                 progress_start: int, progress_end: int) -> Tuple[List[DedupeResult], int, int, int]:
         compare = scan_result.compare_mode
         dupes_folder = os.path.join(folder, DUPES_DIR)
@@ -435,7 +537,13 @@ class FileDeduplicator:
             self._log_status(f"{action} {duplicate_count:,} duplicate(s) {dest_desc}...")
 
         moved_count = 0
+        cleared_count = 0
+        changed_count = 0
         gone_ids: List[int] = []
+        primary_ok: Dict[str, bool] = {}
+        conn = hash_db.connect(self.db_path)
+        if hash_db.get_job(conn):
+            hash_db.set_phase(conn, "applying")
         for idx, (file_hash, entry) in enumerate(duplicates, 1):
             if self._cancelled():
                 self._log_status("Operation cancelled by user")
@@ -445,9 +553,38 @@ class FileDeduplicator:
             progress = progress_start + int((idx / max(duplicate_count, 1)) * (progress_end - progress_start))
             self._report_progress(progress, 100, f"{action}: {filename}")
 
-            primary_name = os.path.basename(scan_result.primary_map[file_hash].path)
+            primary = scan_result.primary_map[file_hash]
+            primary_name = os.path.basename(primary.path)
+            # Safety: a resumed run may apply a list made earlier. Only remove a duplicate that is
+            # unchanged since it was hashed, and only while its kept copy still exists.
+            if file_hash not in primary_ok:
+                primary_ok[file_hash] = os.path.exists(long_path(primary.path))
+            reason = None
+            if not primary_ok[file_hash]:
+                reason = f"kept copy is gone ({primary.path}) - skipped"
+            else:
+                try:
+                    st = os.stat(long_path(entry.path))
+                    if st.st_size != entry.size or st.st_mtime != entry.mtime:
+                        reason = "changed since it was scanned - skipped"
+                except FileNotFoundError:
+                    reason = "already gone"
+                    if entry.file_id is not None:
+                        gone_ids.append(entry.file_id)
+                except OSError as e:
+                    reason = str(e)
+            if reason:
+                changed_count += 1
+                self._log_status(f"Skipped {filename}: {reason}")
+                results.append(DedupeResult(entry.path, None, file_hash, True, False, False, error_message=reason))
+                continue
             try:
                 if permanent_delete:
+                    # A move is a same-drive rename, which Windows allows on read-only files;
+                    # a delete is refused until the attribute is cleared
+                    if clear_read_only and is_read_only(entry.path):
+                        os.chmod(long_path(entry.path), stat.S_IWRITE)
+                        cleared_count += 1
                     os.unlink(long_path(entry.path))
                     results.append(DedupeResult(entry.path, None, file_hash, True, False, True))
                 else:
@@ -458,20 +595,31 @@ class FileDeduplicator:
                 moved_count += 1
                 if entry.file_id is not None:
                     gone_ids.append(entry.file_id)
+                    if len(gone_ids) >= hash_db.BATCH:     # crash-safe: moved files leave the cache as we go
+                        hash_db.forget(conn, gone_ids)
+                        gone_ids = []
             except Exception as e:
+                if permanent_delete and isinstance(e, PermissionError) and is_read_only(entry.path):
+                    e = PermissionError(f"file is read-only - tick 'Clear read-only flag' to delete it ({entry.path})")
                 self._log_status(f"Error {action.lower()} {filename}: {e}")
                 results.append(DedupeResult(entry.path, None, file_hash, True, False, False, error_message=str(e)))
 
-        if gone_ids:                                   # those paths no longer exist: drop their cache rows
-            conn = hash_db.connect(self.db_path)
-            try:
+        try:
+            if gone_ids:                               # those paths no longer exist: drop their cache rows
                 hash_db.forget(conn, gone_ids)
-            finally:
-                conn.close()
+            if not self._cancelled():
+                hash_db.clear_job(conn)                # finished: nothing left to resume
+        finally:
+            conn.close()
+        if changed_count:
+            self._log_status(f"{changed_count:,} file(s) skipped because they changed or their kept copy is gone")
 
+        if cleared_count:
+            self._log_status(f"Cleared the read-only flag on {cleared_count:,} file(s) before deleting")
         action_past = "deleted" if permanent_delete else "moved"
         if self._cancelled():
-            self._log_status(f"Operation cancelled: {moved_count:,} file(s) {action_past}")
+            self._log_status(f"Operation cancelled: {moved_count:,} file(s) {action_past} — "
+                             f"Find Duplicates continues with the rest")
         elif compare:
             self._log_status(f"Complete: {moved_count:,} file(s) {action_past} from target folder")
         else:

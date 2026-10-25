@@ -18,7 +18,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon
 
 from config import ConfigManager
-from hasher import FileDeduplicator, ScanResult, ALGORITHMS, KEEP_RULES, write_csv_report
+from hasher import FileDeduplicator, ScanResult, ALGORITHMS, KEEP_RULES, write_csv_report, is_read_only
 from ui.styles import STYLESHEET, COLORS
 from ui.preview_dialog import PreviewDialog
 from filetypes import PRESETS
@@ -56,6 +56,7 @@ class MainWindow(QMainWindow):
         self._pending_target_folder = None
         self._pending_permanent_delete = False
         self._pending_compare_mode = False
+        self._pending_clear_read_only = False
 
         self.setWindowTitle(f"File Hash Dedupe v{self.version}")
         # Width only: the minimum height comes from the layout, so the window can never be
@@ -83,6 +84,48 @@ class MainWindow(QMainWindow):
         self._poll_timer = QTimer()
         self._poll_timer.setInterval(50)
         self._poll_timer.timeout.connect(self._process_messages)
+
+        # An interrupted run (cancel, crash, closed app) is offered once the window is up
+        QTimer.singleShot(400, self._offer_resume)
+
+    _PHASE_NAMES = {"listing": "listing files", "hashing": "hashing files",
+                    "review": "waiting for your review", "applying": "moving / deleting duplicates"}
+
+    def _offer_resume(self):
+        try:
+            job = FileDeduplicator(self.db_path).pending_job()
+        except Exception:
+            return
+        if not job or self._is_processing:
+            return
+        st = job["settings"]
+        folders = st.get("source") or ""
+        if st.get("compare"):
+            folders = f"A: {st.get('source', '')}\nB: {st.get('target', '')}"
+        action = "permanently delete" if st.get("permanent_delete") else "move to Dupes"
+        box = QMessageBox(self)
+        box.setWindowTitle("Resume Interrupted Run")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(f"The last run stopped while {self._PHASE_NAMES.get(job['phase'], job['phase'])} "
+                    f"({job['updated']}).\n\n{folders}\nDuplicates: {action}\n\n"
+                    f"Resume it from where it stopped?")
+        resume_btn = box.addButton("Resume", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Not Now", QMessageBox.ButtonRole.RejectRole)
+        discard_btn = box.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(resume_btn)
+        box.exec()
+        if box.clickedButton() is discard_btn:
+            FileDeduplicator(self.db_path).finish_job()
+            self.status_list.addItem("Interrupted run discarded; the next scan starts fresh "
+                                     "(cached hashes are kept)")
+        elif box.clickedButton() is resume_btn:
+            self.source_edit.setText(st.get("source", ""))
+            self.target_edit.setText(st.get("target", ""))
+            (self.compare_radio if st.get("compare") else self.single_radio).setChecked(True)
+            self.recursive_check.setChecked(bool(st.get("recursive", True)))
+            self.permanent_delete_check.setChecked(bool(st.get("permanent_delete", False)))
+            self.clear_read_only_check.setChecked(bool(st.get("clear_read_only", False)))
+            self._start_dedupe()
 
     def _build_ui(self):
         central = QWidget()
@@ -186,7 +229,20 @@ class MainWindow(QMainWindow):
         self.permanent_delete_check.setChecked(False)
         self.permanent_delete_check.setStyleSheet("color: #ff6b6b; font-weight: bold;")
         self.permanent_delete_check.toggled.connect(self._on_permanent_delete_toggled)
-        opt_layout.addWidget(self.permanent_delete_check)
+        delete_row = QHBoxLayout()
+        delete_row.addWidget(self.permanent_delete_check)
+        delete_row.addSpacing(24)
+        # Read-only files (common on old CD / backup-disk copies) refuse deletion with
+        # "Access is denied"; clearing the attribute needs no admin rights for files you own
+        self.clear_read_only_check = QCheckBox("Clear read-only flag")
+        self.clear_read_only_check.setToolTip(
+            "Windows refuses to delete read-only files ('Access is denied').\n"
+            "Tick this to remove the read-only flag from a duplicate just before it is deleted.\n"
+            "Moving to the Dupes folder works on read-only files without this.")
+        self.clear_read_only_check.setEnabled(False)
+        delete_row.addWidget(self.clear_read_only_check)
+        delete_row.addStretch()
+        opt_layout.addLayout(delete_row)
 
         self.csv_report_check = QCheckBox("Write CSV report of duplicate groups")
         opt_layout.addWidget(self.csv_report_check)
@@ -324,6 +380,7 @@ class MainWindow(QMainWindow):
             self._on_permanent_delete_toggled(self.permanent_delete_check.isChecked())
 
     def _on_permanent_delete_toggled(self, checked: bool):
+        self.clear_read_only_check.setEnabled(checked)
         if self.compare_radio.isChecked():
             return
         if checked:
@@ -361,6 +418,7 @@ class MainWindow(QMainWindow):
             if name in self.type_checks:
                 self.type_checks[name].setChecked(True)
         self.extra_mask_edit.setText(self.config.get('extra_mask', ''))
+        self.clear_read_only_check.setChecked(self.config.get('clear_read_only', False))
         if self.config.get('compare_mode', False):
             self.compare_radio.setChecked(True)
             self._on_mode_changed(False)
@@ -378,6 +436,7 @@ class MainWindow(QMainWindow):
         self.config.set('max_size_mb', self.max_size_spin.value())
         self.config.set('file_types', [n for n, c in self.type_checks.items() if c.isChecked()])
         self.config.set('extra_mask', self.extra_mask_edit.text().strip())
+        self.config.set('clear_read_only', self.clear_read_only_check.isChecked())
         self.config.set('compare_mode', self.compare_radio.isChecked())
         self.config.save()
 
@@ -428,6 +487,7 @@ class MainWindow(QMainWindow):
         self._pending_target_folder = target
         self._pending_permanent_delete = permanent_delete
         self._pending_compare_mode = compare_mode
+        self._pending_clear_read_only = permanent_delete and self.clear_read_only_check.isChecked()
 
         self.clear_cache_btn.setEnabled(False)
         self._deduplicator = FileDeduplicator(
@@ -446,7 +506,9 @@ class MainWindow(QMainWindow):
                   ALGORITHMS[self.algorithm_combo.currentText()],
                   self.keep_rule_combo.currentText(), compare_mode,
                   self.max_size_spin.value() * 1024 * 1024 if self.max_size_check.isChecked() else 0,
-                  self._file_type_selection()),
+                  self._file_type_selection(),
+                  {"source": source, "target": target, "permanent_delete": permanent_delete,
+                   "clear_read_only": self._pending_clear_read_only}),
             daemon=True
         )
         thread.start()
@@ -461,20 +523,30 @@ class MainWindow(QMainWindow):
         return tuple(selection)
 
     def _scan_worker(self, source: str, target: str, recursive: bool, algorithm: str, keep_rule: str,
-                     compare_mode: bool, max_size: int, file_types: tuple):
+                     compare_mode: bool, max_size: int, file_types: tuple, job_extra: dict):
+        # resume=True: an interrupted run of the same folder(s) carries on from the step it reached
         try:
             if compare_mode:
                 scan_result = self._deduplicator.scan_compare(source, target, recursive=recursive,
                                                               algorithm=algorithm, max_size=max_size,
-                                                              file_types=file_types)
+                                                              file_types=file_types, resume=True,
+                                                              job_extra=job_extra)
             else:
                 scan_result = self._deduplicator.scan(source, recursive=recursive, algorithm=algorithm,
                                                       keep_rule=keep_rule, max_size=max_size,
-                                                      file_types=file_types)
+                                                      file_types=file_types, resume=True,
+                                                      job_extra=job_extra)
 
             if self._cancel_requested:
                 self._message_queue.put(('cancelled', None))
             else:
+                if self._pending_permanent_delete and scan_result.to_remove:
+                    self._message_queue.put(('status', "Checking duplicates for the read-only flag..."))
+                    paths = {e.path for es in scan_result.groups.values() for e in es}
+                    scan_result.read_only_paths = frozenset(p for p in paths if is_read_only(p))
+                    if scan_result.read_only_paths:
+                        self._message_queue.put(('status', f"{len(scan_result.read_only_paths):,} file(s) in "
+                                                           f"the duplicate groups are read-only"))
                 self._message_queue.put(('scan_complete', scan_result))
         except ValueError as e:
             self._message_queue.put(('error', {'type': 'validation', 'message': str(e)}))
@@ -486,12 +558,14 @@ class MainWindow(QMainWindow):
         try:
             if compare_mode:
                 results, total, unique, moved = self._deduplicator.execute_compare(
-                    scan_result, target, permanent_delete=permanent_delete
+                    scan_result, target, permanent_delete=permanent_delete,
+                    clear_read_only=self._pending_clear_read_only
                 )
                 report_folder = target
             else:
                 results, total, unique, moved = self._deduplicator.execute(
-                    scan_result, source, permanent_delete=permanent_delete
+                    scan_result, source, permanent_delete=permanent_delete,
+                    clear_read_only=self._pending_clear_read_only
                 )
                 report_folder = source
 
@@ -553,6 +627,7 @@ class MainWindow(QMainWindow):
     def _on_scan_complete(self, scan_result: ScanResult):
         if not scan_result.groups:
             self._finish_processing()
+            self._deduplicator.finish_job()           # nothing to apply: nothing to resume
             self.progress_label.setText("No duplicates found")
             noun = "matches" if self._pending_compare_mode else "duplicates"
             QMessageBox.information(self, "No Duplicates", f"No {noun} were found.")
@@ -563,6 +638,7 @@ class MainWindow(QMainWindow):
             self._deduplicator, scan_result,
             compare_mode=self._pending_compare_mode,
             permanent_delete=self._pending_permanent_delete,
+            clear_read_only=self._pending_clear_read_only,
             parent=self
         )
         if dialog.exec():
@@ -582,6 +658,7 @@ class MainWindow(QMainWindow):
         else:
             self._finish_processing()
             self.progress_label.setText("Cancelled")
+            self._deduplicator.finish_job()           # deliberate: nothing to resume
             self.status_list.addItem("Review cancelled, no files were changed")
             self.status_list.scrollToBottom()
 

@@ -13,7 +13,7 @@ A desktop application that finds and removes duplicate files based on content ha
 - **File Types**: dedupe only Images, Videos, Data... (presets shared with Burn List Creator / FolderSync / File Copy Move Manager) plus custom masks
 - **Maximum File Size**: skip files larger than a set size (default 100 MB) so big model files are never hashed
 - **Progress Tracking**: Real-time progress bar and status log
-- **Cancellable**: Cancel mid-run at any time
+- **Cancellable + Resumable**: cancel at any time (or close / crash); the next run continues from the step it reached
 
 ## Usage
 
@@ -43,6 +43,12 @@ pyinstaller FileHashDedupe.spec --clean --noconfirm
 ```
 
 ## Version History
+
+### v1.5.1
+- **Read-only files**: Windows refuses to delete a file with the read-only attribute ("Access is denied", WinError 5) even when nothing has it open - common on copies from CDs / old backup disks. New option "Clear read-only flag" (next to Permanently delete) removes the flag just before each duplicate is deleted; no admin rights needed for files you own. The scan checks the duplicate groups and the review screen says how many of the files to delete are read-only. Moving to Dupes was never affected (a same-drive move is a rename)
+- **Resume after cancel / crash**: the run in progress and the step it reached (listing, hashing, review, applying) are kept in the database (schema v3: `listing`, `walk_queue`, `job` tables). Listing is checkpointed every few seconds, hashes every 500 files, and moved/deleted files leave the cache in batches. Find Duplicates on the same folder(s) continues from that step instead of starting over; at launch the app offers Resume / Not Now / Discard
+- **Safety when applying**: a duplicate is only moved/deleted if its size and modified time still match the scan and its kept copy still exists; otherwise it is skipped and logged
+- 10 new tests (33 total)
 
 ### v1.5.0
 - New File Types box: tick Images / Videos / Audio / Documents / Data / Archives / Code (the same presets as Burn List Creator, FolderSync and File Copy Move Manager, in `filetypes.py`) and/or type extra masks (`*.psd, blend`). Only those types are hashed and deduped - AI model files and anything else unticked are ignored. Nothing ticked = every type, as before

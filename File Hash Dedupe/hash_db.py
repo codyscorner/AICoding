@@ -12,6 +12,7 @@ Because hashes persist between runs, a rescan only hashes files that are new or 
 size / modified time changed since they were last hashed.
 """
 import datetime
+import json
 import os
 import sqlite3
 
@@ -49,7 +50,26 @@ WHERE instr(lower(path), '\\$recycle.bin\\') > 0
    OR instr(lower(path), '\\system volume information\\') > 0;
 """                           # v1.4.2: system folders are no longer scanned; forget rows already listed
 
-MIGRATIONS = [SCHEMA_V1, SCHEMA_V2]      # index i upgrades user_version i -> i+1
+SCHEMA_V3 = """
+CREATE TABLE listing (                    -- files found by the walk in progress (resumable)
+    path  TEXT PRIMARY KEY COLLATE NOCASE,
+    size  INTEGER NOT NULL,
+    mtime REAL NOT NULL,
+    side  INTEGER NOT NULL
+);
+CREATE TABLE walk_queue (                 -- folders the walk in progress has still to list
+    dir  TEXT PRIMARY KEY COLLATE NOCASE,
+    side INTEGER NOT NULL
+);
+CREATE TABLE job (                        -- the run in progress: settings + step reached
+    id       INTEGER PRIMARY KEY CHECK (id = 1),
+    settings TEXT NOT NULL,
+    phase    TEXT NOT NULL,
+    updated  TEXT
+);
+"""                           # v1.5.1: cancel / crash resumes where it stopped
+
+MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3]      # index i upgrades user_version i -> i+1
 
 # Keep rule -> ORDER BY inside the ROW_NUMBER() window (first row = the copy that is kept).
 # Only these fixed strings are ever put into the SQL text.
@@ -97,53 +117,97 @@ def set_type_filter(conn, matcher=None) -> None:
 
 # ── listing ───────────────────────────────────────────────────────────────────
 
-def begin_run(conn) -> None:
-    """Start a new scan: forget the previous run's membership and the listing scratch table."""
+def begin_run(conn, folders) -> None:
+    """Start a fresh scan: forget the previous run's membership and listing progress, and queue
+    the root folders [(abs_path, side)] for listing."""
     conn.execute("DELETE FROM run_files")
-    conn.execute("""CREATE TEMP TABLE IF NOT EXISTS seen (
-                        path  TEXT PRIMARY KEY COLLATE NOCASE,
-                        size  INTEGER NOT NULL,
-                        mtime REAL NOT NULL,
-                        side  INTEGER NOT NULL)""")
-    conn.execute("DELETE FROM temp.seen")
+    conn.execute("DELETE FROM listing")
+    conn.execute("DELETE FROM walk_queue")
+    conn.executemany("INSERT OR IGNORE INTO walk_queue(dir, side) VALUES (?,?)", list(folders))
     conn.commit()
 
 
-def add_listing(conn, entries, side: int) -> None:
-    """Stage walked files [(full_path, size, mtime)] for this run. A path already staged keeps
-    its first side (so a file can only ever be in the run once)."""
-    rows = [(p, s, m, side) for p, s, m in entries]
-    for i in range(0, len(rows), BATCH):
-        conn.executemany("INSERT OR IGNORE INTO temp.seen(path, size, mtime, side) VALUES (?,?,?,?)",
-                         rows[i:i + BATCH])
+def walk_queue(conn):
+    """Folders still to be listed [(dir, side)] - a resumed scan carries on from here."""
+    return [(r["dir"], r["side"]) for r in conn.execute("SELECT dir, side FROM walk_queue ORDER BY rowid")]
+
+
+def checkpoint_walk(conn, entries, pending_dirs) -> None:
+    """Save listing progress in one transaction: walked files [(path, size, mtime, side)] go into
+    `listing` (first side wins) and the walk queue becomes `pending_dirs` [(dir, side)].
+    A cancelled or crashed listing resumes from the last checkpoint."""
+    for i in range(0, len(entries), BATCH):
+        conn.executemany("INSERT OR IGNORE INTO listing(path, size, mtime, side) VALUES (?,?,?,?)",
+                         entries[i:i + BATCH])
+    conn.execute("DELETE FROM walk_queue")
+    conn.executemany("INSERT OR IGNORE INTO walk_queue(dir, side) VALUES (?,?)", list(pending_dirs))
     conn.commit()
+
+
+def listing_counts(conn) -> dict:
+    """side -> files listed so far"""
+    return {r["side"]: r["n"] for r in conn.execute("SELECT side, COUNT(*) AS n FROM listing GROUP BY side")}
 
 
 def apply_listing(conn) -> dict:
-    """Merge the staged listing into `files`, all in SQL:
+    """Merge the finished listing into `files`, all in SQL:
     new path -> insert; size or mtime changed -> drop its now-stale hashes and update;
     then every listed file joins `run_files`. Returns {new, changed, unchanged}."""
     counts = conn.execute("""
         SELECT COALESCE(SUM(f.id IS NULL), 0) AS new,
                COALESCE(SUM(f.id IS NOT NULL AND (f.size <> s.size OR f.mtime <> s.mtime)), 0) AS changed,
                COUNT(*) AS listed
-        FROM temp.seen s LEFT JOIN files f ON f.path = s.path""").fetchone()
+        FROM listing s LEFT JOIN files f ON f.path = s.path""").fetchone()
     conn.execute("""
         DELETE FROM hashes WHERE file_id IN (
-            SELECT f.id FROM files f JOIN temp.seen s ON s.path = f.path
+            SELECT f.id FROM files f JOIN listing s ON s.path = f.path
             WHERE f.size <> s.size OR f.mtime <> s.mtime)""")
     conn.execute("""
         INSERT INTO files(path, size, mtime)
-        SELECT path, size, mtime FROM temp.seen WHERE true
+        SELECT path, size, mtime FROM listing WHERE true
         ON CONFLICT(path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime
         WHERE files.size <> excluded.size OR files.mtime <> excluded.mtime""")
     conn.execute("""
         INSERT OR IGNORE INTO run_files(file_id, side)
-        SELECT f.id, s.side FROM temp.seen s JOIN files f ON f.path = s.path""")
-    conn.execute("DELETE FROM temp.seen")
+        SELECT f.id, s.side FROM listing s JOIN files f ON f.path = s.path""")
+    conn.execute("DELETE FROM listing")
+    conn.execute("DELETE FROM walk_queue")
     conn.commit()
     return {"new": counts["new"], "changed": counts["changed"],
             "unchanged": counts["listed"] - counts["new"] - counts["changed"]}
+
+
+# ── resumable job ─────────────────────────────────────────────────────────────
+# One row: the settings of the run in progress and the step it reached
+# (listing -> hashing -> review -> applying). No row = nothing to resume.
+
+RESUMABLE_PHASES = ("listing", "hashing", "review", "applying")
+
+
+def get_job(conn):
+    row = conn.execute("SELECT settings, phase, updated FROM job WHERE id = 1").fetchone()
+    if row is None:
+        return None
+    return {"settings": json.loads(row["settings"]), "phase": row["phase"], "updated": row["updated"]}
+
+
+def set_job(conn, settings: dict, phase: str) -> None:
+    conn.execute("INSERT OR REPLACE INTO job(id, settings, phase, updated) VALUES (1, ?, ?, ?)",
+                 (json.dumps(settings), phase, _now()))
+    conn.commit()
+
+
+def set_phase(conn, phase: str) -> None:
+    conn.execute("UPDATE job SET phase = ?, updated = ? WHERE id = 1", (phase, _now()))
+    conn.commit()
+
+
+def clear_job(conn) -> None:
+    """The run finished (or was deliberately abandoned): nothing to resume."""
+    conn.execute("DELETE FROM job")
+    conn.execute("DELETE FROM listing")
+    conn.execute("DELETE FROM walk_queue")
+    conn.commit()
 
 
 def prune_folder(conn, folder: str) -> int:
@@ -262,6 +326,7 @@ def stats(conn) -> dict:
 
 def clear(conn) -> None:
     """Forget every cached file and hash (the next scan hashes everything again)."""
+    clear_job(conn)
     conn.execute("DELETE FROM run_files")
     conn.execute("DELETE FROM hashes")
     conn.execute("DELETE FROM files")

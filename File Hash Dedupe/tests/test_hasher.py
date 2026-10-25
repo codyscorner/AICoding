@@ -341,3 +341,195 @@ def test_file_types_in_compare_mode(tmp_path, dd):
     _write(b / "m copy.safetensors", b"safe")
     res = dd.scan_compare(str(a), str(b), file_types=("Images",))
     assert [os.path.basename(e.path) for _, e in res.to_remove] == ["p copy.png"]
+
+
+def _make_read_only(path):
+    import stat
+    os.chmod(path, stat.S_IREAD)
+
+
+def test_read_only_delete_fails_with_clear_message(tmp_path, dd):
+    src = tmp_path / "src"
+    _single_tree(src)
+    for p in (src / "b.txt", src / "sub" / "deeper" / "c.txt"):
+        _make_read_only(p)
+    assert hasher.is_read_only(str(src / "b.txt"))
+    assert hasher.count_read_only([str(src / "a.txt"), str(src / "b.txt")]) == 1
+    msgs = []
+    d = FileDeduplicator(dd.db_path, status_callback=msgs.append)
+    res = d.scan(str(src))
+    results, _, _, deleted = d.execute(res, str(src), permanent_delete=True)
+    assert deleted == 0
+    assert (src / "b.txt").exists()
+    assert any("read-only" in m and "Clear read-only flag" in m for m in msgs)
+    assert all("read-only" in r.error_message for r in results if r.is_duplicate)
+
+
+def test_read_only_cleared_then_deleted(tmp_path, dd):
+    src = tmp_path / "src"
+    _single_tree(src)
+    for p in (src / "b.txt", src / "sub" / "deeper" / "c.txt"):
+        _make_read_only(p)
+    _make_read_only(src / "a.txt")                       # the kept copy stays read-only
+    msgs = []
+    d = FileDeduplicator(dd.db_path, status_callback=msgs.append)
+    res = d.scan(str(src))
+    _, _, _, deleted = d.execute(res, str(src), permanent_delete=True, clear_read_only=True)
+    assert deleted == 2
+    assert not (src / "b.txt").exists()
+    assert hasher.is_read_only(str(src / "a.txt"))
+    assert any("Cleared the read-only flag on 2" in m for m in msgs)
+
+
+def test_read_only_files_move_without_clearing(tmp_path, dd):
+    src = tmp_path / "src"
+    _single_tree(src)
+    _make_read_only(src / "b.txt")
+    res = dd.scan(str(src))
+    _, _, _, moved = dd.execute(res, str(src))           # same-drive move = rename, allowed
+    assert moved == 2
+    assert (src / "Dupes" / "b.txt").exists()
+
+
+def test_read_only_paths_survive_rerank(tmp_path, dd):
+    src = tmp_path / "src"
+    _single_tree(src)
+    res = dd.scan(str(src))
+    res.read_only_paths = frozenset({str(src / "b.txt")})
+    assert dd.rescan_keep_rule(res, "Oldest").read_only_paths == res.read_only_paths
+
+
+# ---------- resume after cancel ----------
+
+def _resume_tree(root):
+    for d in range(6):
+        for f in range(3):
+            _write(root / f"dir{d}" / f"f{f}.jpg", f"content{f}".encode())   # 6 copies of each of 3 files
+
+
+@pytest.fixture
+def scandirs(monkeypatch):
+    """Record every folder listed, to prove a resumed scan skips work already done."""
+    seen = []
+    real = os.scandir
+
+    def spy(path):
+        seen.append(path)
+        return real(path)
+    monkeypatch.setattr(hasher.os, "scandir", spy)
+    return seen
+
+
+def _cancel_after(n):
+    state = {"calls": 0}
+
+    def check():
+        state["calls"] += 1
+        return state["calls"] > n
+    return check
+
+
+def test_resume_after_cancel_while_listing(tmp_path, db, scandirs):
+    db.parent.mkdir()
+    src = tmp_path / "src"
+    _resume_tree(src)
+    d = FileDeduplicator(db, cancel_check=_cancel_after(3))
+    d.checkpoint_files = 1                               # save after every folder
+    assert d.scan(str(src), resume=True).to_remove == []
+    job = d.pending_job()
+    assert job["phase"] == "listing"
+    import hash_db
+    conn = hash_db.connect(db)
+    listed = sum(hash_db.listing_counts(conn).values())
+    queued = len(hash_db.walk_queue(conn))
+    conn.close()
+    assert 0 < listed < 18 and queued > 0
+    first_pass = len(scandirs)
+
+    scandirs.clear()
+    res = FileDeduplicator(db).scan(str(src), resume=True)
+    assert len(scandirs) == 7 - first_pass               # root + 6 dirs, minus those already listed
+    assert res.total_files == 18
+    assert len(res.to_remove) == 15
+    assert FileDeduplicator(db).pending_job()["phase"] == "review"
+
+
+def test_resume_after_cancel_while_hashing_skips_listing(tmp_path, db, scandirs, hash_calls):
+    db.parent.mkdir()
+    src = tmp_path / "src"
+    _resume_tree(src)
+    state = {"cancel": False}
+    d = FileDeduplicator(db, max_workers=1, cancel_check=lambda: state["cancel"],
+                         progress_callback=lambda c, t, f: state.update(cancel=f.startswith("Hashing 4/")))
+    d.scan(str(src), resume=True)
+    assert d.pending_job()["phase"] == "hashing"
+    saved = FileDeduplicator(db).cache_stats()["hashes"]
+    assert 4 <= saved < 18
+
+    scandirs.clear()
+    hash_calls.clear()
+    res = FileDeduplicator(db, max_workers=2).scan(str(src), resume=True)
+    assert scandirs == []                                # listing was finished: not redone
+    assert len(hash_calls) == 18 - saved                 # only the files not hashed yet
+    assert len(res.to_remove) == 15
+
+
+def test_resume_after_cancel_while_applying(tmp_path, db, scandirs, hash_calls):
+    db.parent.mkdir()
+    src = tmp_path / "src"
+    _resume_tree(src)
+    res = FileDeduplicator(db).scan(str(src), resume=True)
+    d = FileDeduplicator(db, cancel_check=_cancel_after(5))
+    _, _, _, moved = d.execute(res, str(src))
+    assert 0 < moved < 15
+    assert d.pending_job()["phase"] == "applying"
+
+    scandirs.clear()
+    hash_calls.clear()
+    res = FileDeduplicator(db).scan(str(src), resume=True)
+    assert scandirs == [] and hash_calls == []           # straight back to the remaining duplicates
+    assert len(res.to_remove) == 15 - moved
+    _, _, _, moved2 = FileDeduplicator(db).execute(res, str(src))
+    assert moved + moved2 == 15
+    assert FileDeduplicator(db).pending_job() is None    # finished: nothing to resume
+    assert len(os.listdir(src / "Dupes")) == 15
+
+
+def test_resume_ignored_for_a_different_folder(tmp_path, db):
+    db.parent.mkdir()
+    a, b = tmp_path / "a", tmp_path / "b"
+    _resume_tree(a)
+    _write(b / "x.jpg", b"x")
+    _write(b / "y.jpg", b"x")
+    FileDeduplicator(db, cancel_check=_cancel_after(2)).scan(str(a), resume=True)
+    res = FileDeduplicator(db).scan(str(b), resume=True)
+    assert res.total_files == 2 and len(res.to_remove) == 1
+
+
+def test_apply_skips_changed_duplicate_and_missing_kept_copy(tmp_path, dd):
+    src = tmp_path / "src"
+    _single_tree(src)                                    # a.txt kept; b.txt, sub/deeper/c.txt dupes
+    _write(src / "x1.bin", b"xx")
+    _write(src / "x2.bin", b"xx")                        # x1 kept, x2 dupe
+    res = dd.scan(str(src))
+    _write(src / "b.txt", b"same", 9999)                 # same content, new mtime: changed since scan
+    (src / "x1.bin").unlink()                            # kept copy gone
+    results, _, _, moved = dd.execute(res, str(src))
+    assert moved == 1                                    # only c.txt
+    assert (src / "b.txt").exists() and (src / "x2.bin").exists()
+    errors = {os.path.basename(r.source_path): r.error_message for r in results if r.error_message}
+    assert "changed since it was scanned" in errors["b.txt"]
+    assert "kept copy is gone" in errors["x2.bin"]
+
+
+def test_review_cancel_and_clear_cache_end_the_job(tmp_path, dd):
+    src = tmp_path / "src"
+    _single_tree(src)
+    dd.scan(str(src), resume=True, job_extra={"source": str(src), "permanent_delete": True})
+    job = dd.pending_job()
+    assert job["phase"] == "review" and job["settings"]["permanent_delete"] is True
+    dd.finish_job()
+    assert dd.pending_job() is None
+    dd.scan(str(src), resume=True)
+    dd.clear_cache()
+    assert dd.pending_job() is None

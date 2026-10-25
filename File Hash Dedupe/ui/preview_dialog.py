@@ -26,12 +26,14 @@ class PreviewDialog(QDialog):
     """
 
     def __init__(self, deduplicator: FileDeduplicator, scan_result: ScanResult,
-                 compare_mode: bool = False, permanent_delete: bool = False, parent=None):
+                 compare_mode: bool = False, permanent_delete: bool = False,
+                 clear_read_only: bool = False, parent=None):
         super().__init__(parent)
         self.deduplicator = deduplicator
         self.scan_result = scan_result
         self.compare_mode = compare_mode
         self.permanent_delete = permanent_delete
+        self.clear_read_only = clear_read_only
 
         action_word = "delete" if permanent_delete else "move"
         title = "Review Matches" if compare_mode else "Review Duplicates"
@@ -65,6 +67,13 @@ class PreviewDialog(QDialog):
         note_label = QLabel(note)
         note_label.setObjectName("subtitle")
         layout.addWidget(note_label)
+
+        # Read-only check: only matters when deleting (moves are renames, which Windows allows)
+        self.read_only_label = QLabel()
+        self.read_only_label.setTextFormat(Qt.TextFormat.RichText)
+        self.read_only_label.setWordWrap(True)
+        self.read_only_label.setVisible(False)
+        layout.addWidget(self.read_only_label)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
@@ -124,6 +133,18 @@ class PreviewDialog(QDialog):
             )
 
         self.proceed_btn.setEnabled(duplicate_count > 0)
+
+        read_only = sum(1 for _, e in self.scan_result.to_remove if e.path in self.scan_result.read_only_paths)
+        if self.permanent_delete and read_only:
+            if self.clear_read_only:
+                text = (f"<span style='color:#4caf50'>●</span> {read_only:,} of the files to delete are "
+                        f"read-only - their read-only flag will be cleared first.")
+            else:
+                text = (f"<span style='color:#f0a030'>●</span> {read_only:,} of the files to delete are "
+                        f"read-only and will fail with 'Access is denied'. Cancel and tick "
+                        f"'Clear read-only flag' to delete them.")
+            self.read_only_label.setText(text)
+        self.read_only_label.setVisible(bool(self.permanent_delete and read_only))
 
     def get_scan_result(self) -> ScanResult:
         return self.scan_result
