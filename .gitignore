@@ -105,3 +105,6 @@ Cumfy_Workflow_Editor/Test files/
 
 # RunPod pod-control chain log
 **/runpod_pod.log
+
+# Style Randomizer per-day run logs (written next to the EXE; contain local paths + prompts)
+ComfyUI_Style_Randomizer/logs/
