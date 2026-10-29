@@ -1,0 +1,89 @@
+HALLOWEEN SCENARIOS + IDEAS  (ComfyUI Style Randomizer > Generate Scenes with AI)
+Paste ONE Scenario into the Scenario box, then paste ONE Idea into the Idea box.
+Each Scenario ends in <scene description> -- the AI replaces only that placeholder.
+(The spooky-sweater couch scenario you already have is not repeated here.)
+
+======================================================================
+SCENARIO 1 - FRONT PORCH, HANDING OUT CANDY
+======================================================================
+Keep both people exactly as they appear in the reference photo, same faces, same hair, same ages. Each of them wears a different, random Halloween costume that is realistic and homemade-looking, never matching each other. Medium shot at eye level, the two standing close together on a front porch holding a candy bowl and smiling at the camera, with the porch decorations and the night behind them. Realistic photograph, natural light from lanterns and porch lights. One single photograph, not two panels. Setting: <scene description>
+
+Ideas:
+1. A classic suburban porch on a crisp October night: a row of glowing jack-o'-lanterns on the steps, orange string lights along the railing, cotton cobwebs over the door frame, a wreath of black feathers and dried leaves, a plastic skeleton sitting in a rocking chair, and a street of other lit-up houses fading into mist.
+2. A stone cottage porch in the countryside with thick fog rolling in off a field: hay bales and cornstalks tied to the posts, a scarecrow slumped on a bench, a single hanging lantern swaying, crows perched on the roof edge, and a crescent moon over bare oak trees.
+3. A Victorian townhouse stoop in a historic district: black wrought-iron railings wrapped in faux ivy, tall candle lanterns on each step, a wooden coffin-shaped planter filled with purple mums, gas-lamp glow, and a cobblestone street with fallen leaves blowing past.
+4. A rustic log-cabin porch in the mountains: dozens of carved pumpkins stacked on the rail, antler-and-pine decorations mixed with spiderwebs, a fire pit crackling at the edge of the frame, smoky blue dusk, and dark pine forest rising behind.
+5. A beachside house porch at dusk in October: weathered grey boards, driftwood skeletons posed on the deck, glowing paper lanterns in the shape of ghosts, a hammock with a witch's hat lying in it, and ocean waves and orange afterglow in the distance.
+6. A modern minimalist porch with a dramatic purple-and-green lighting setup: a giant white inflatable ghost, a spiderweb stretched across the door lit by LEDs, black-and-white striped trim, neat rows of white pumpkins, and a clean, glossy driveway with a hovering low fog machine mist.
+7. A farmhouse porch during harvest season: wooden crates of apples and gourds, a vintage red wagon full of small pumpkins, quilted bunting in rust and plum, a candy-corn wreath, an old porch swing, and a glowing barn and silo in the field behind.
+8. A rainy-night porch: wet boards reflecting orange light, a drizzle falling off the awning, glowing pumpkins with rain beads on them, moths circling a bare yellow bulb, a wet black umbrella leaned on the wall, and a dark glistening street in the background.
+9. A Southern-style wraparound porch draped in Spanish moss: tall white columns, cobweb-covered lanterns, a bowl of candy beside a hanging fern, black cat silhouettes in the windows, a glowing moon through the live oaks, and fireflies-like warm lights in the yard.
+10. A cozy townhouse porch in a snowy early-winter-style autumn: first dusting of snow on the steps and on the pumpkins, warm light spilling from the doorway, knitted garlands of orange and black, a stack of firewood, breath visible in the cold air, and softly falling flakes.
+
+======================================================================
+SCENARIO 2 - PUMPKIN CARVING TABLE
+======================================================================
+Keep both people exactly as they appear in the reference photo, same faces, same hair, same ages. Each wears a different, random casual autumn outfit with a spooky touch, such as a Halloween-print flannel, a cobweb cardigan, or a themed sweatshirt, never matching. Medium-close candid shot at eye level, the two sitting side by side at a table covered with newspaper, carving pumpkins with tools in hand, laughing, with the finished jack-o'-lanterns and the surroundings behind them. Realistic photograph, warm natural light. One single photograph, not two panels. Setting: <scene description>
+
+Ideas:
+1. A bright farmhouse kitchen on a sunny afternoon: a long butcher-block table piled with pumpkin guts in a metal bowl, carving kits and stencils, a tray of roasting seeds, copper pots on the wall, lace curtains, and a window looking onto a golden maple tree.
+2. A sunny open barn at a pumpkin patch: a plank table among hundreds of orange pumpkins on pallets, hay on the floor, a hand-painted "Pick Your Own" sign, string lights along the rafters, and wooden wagons and rolling fields outside the big doors.
+3. A candlelit dining room at night: a dark wooden table with lit pumpkins already carved with elaborate faces, black taper candles in a candelabra, cobwebs across a chandelier, a vintage portrait on the wall, and a long hallway behind.
+4. A backyard patio at golden hour: a picnic table under a pergola, kids' chalk drawings of ghosts on the pavers, a fire pit with a kettle, bales of hay as seats, orange and plum fall leaves drifting in, and a fenced garden with a few leftover sunflowers.
+5. A cluttered garage workshop turned into a pumpkin studio: pegboard of tools, a workbench lit by a hanging shop lamp, sawdust-like pumpkin seeds scattered, cardboard boxes of decorations, a retro radio, and a roll-up door left half open on a dusky street.
+6. A cozy living-room floor-level table by a fireplace: a low coffee table covered in paper, a fire crackling, knitted blankets, mugs of cider with cinnamon sticks, a sleeping dog in the corner, bookshelves lined with vintage monster novels, and a mantel of tiny ghosts.
+7. A lakeside cabin porch table in the morning: mist rising from calm water, pumpkins lined along the dock rail, a thermos and wool blankets, red and yellow trees across the lake, a canoe pulled onto shore, and soft pale light.
+8. A city apartment kitchen with a big window and rain: a small round table crowded with pumpkins, a string of purple fairy lights, fogged glass, a record player, hanging plants, a skyline of lit windows outside, and a black-cat clock on the wall.
+9. An old-fashioned church-hall harvest festival: long folding tables with paper tablecloths, rows of carved pumpkins with prize ribbons, hand-lettered signs, people in the blurred background, bunting, a cider table, and warm yellow fluorescent-and-lamp light.
+10. A greenhouse conservatory in October: a rustic potting table among ferns and glass panes, pumpkins and gourds in terracotta pots, hanging dried herbs, dusk light through foggy glass, antique lanterns, and a wrought-iron bench by the door.
+
+======================================================================
+SCENARIO 3 - COSTUME PARTY PORTRAIT
+======================================================================
+Keep both people exactly as they appear in the reference photo, same faces, same hair, same ages. Each wears a different, random, realistic Halloween costume with good detail, such as a vampire, a witch, a pirate, a 1920s flapper, a mummy, a mad scientist, or a classic movie monster, never matching each other. Medium-wide shot at eye level, the two posing close together for a party photo, holding drinks, with the party decorations and a few blurred guests behind them. Realistic photograph, flash-and-ambient party lighting. One single photograph, not two panels. Setting: <scene description>
+
+Ideas:
+1. A big living-room house party: purple and orange lights, a table of themed snacks with a cauldron punch bowl, balloon arches in black and orange, spiderwebs across the ceiling, a fog machine haze, and a crowd of costumed guests mid-conversation.
+2. A haunted-mansion-themed ballroom: a grand staircase with candelabras, long red velvet drapes, a chandelier dripping with faux cobwebs, a checkerboard floor, a string quartet in the background, and masked dancers in elegant gowns and tuxedos.
+3. A decorated garage-turned-bar: neon signs glowing green and orange, skeleton props hanging from the rafters, a keg and a taco table, a pool table covered in a cobweb cloth, a speaker stack, and friends laughing in costumes.
+4. A rooftop bar party at night: a city skyline behind them, orange string lights, black and silver balloons, bat cutouts on the glass railing, heat lamps, a DJ booth, and a full harvest moon over the buildings.
+5. A rustic barn Halloween dance: hay bales, hanging lanterns, a live band on a plank stage, a hand-painted "Monster Mash" banner, a big bonfire seen through the open doors, and couples in costume swinging to the music.
+6. A spooky backyard party under the trees: sheets-as-ghosts hung from branches, lanterns glowing in the oak leaves, a long table of candy and cider, a smoky fire pit, a movie being projected on a white sheet, and bundles of dried cornstalks.
+7. A candlelit speakeasy-style cellar: brick walls, a dark wood bar lined with potion-like bottles, flickering candles, skulls on shelves, a mysterious fog, a jazz trio, and red-lit corners.
+8. A school-gym-style costume contest: crepe-paper streamers in orange and black, a hand-made podium with trophies, balloons, a judges' table, a banner reading "Best Costume", children and parents in the blurred background, and a disco ball.
+9. A lakeside lodge party: a stone fireplace, a mounted-antler chandelier with fake spiders, a buffet of caramel apples, guests in costume out on the deck, a black lake with a mist and a full moon through big windows.
+10. A retro 1980s basement party: wood paneling, lava lamps, a VHS tower of horror movies, a bowl of candy, a vintage TV playing a monster film, black-and-orange streamers, and a shag rug with kids and friends in costume.
+
+======================================================================
+SCENARIO 4 - MOONLIT NIGHT WALK
+======================================================================
+Keep both people exactly as they appear in the reference photo, same faces, same hair, same ages. Each wears a different, random warm autumn coat or jacket with a spooky accessory, such as a witch's hat, a cape, a lantern, a striped scarf, or a mask pushed up on the forehead, never matching. Full-length shot slightly below eye level, the two walking toward the camera along a path, one carrying a glowing lantern, looking relaxed and happy, with the spooky landscape stretching behind them. Realistic photograph, moonlight and lantern light, shallow depth of field. One single photograph, not two panels. Setting: <scene description>
+
+Ideas:
+1. A dirt lane through an enormous corn maze at night: tall dried stalks on both sides, a full harvest moon, a few scarecrows silhouetted at the turns, glowing pumpkins lining the path, patches of ground fog, and a distant farmhouse light.
+2. An old stone cemetery path in autumn: moss-covered headstones, tall bare trees with a few orange leaves, wrought-iron gates, a thin mist curling at ground level, ancient mausoleums, and moon shadows across the graves.
+3. A leaf-covered forest trail under towering maples: red and gold leaves glowing in the lantern light, a canopy of bare branches, a distant owl on a limb, fallen logs with toadstools, hanging mist, and a silver moon through the trees.
+4. A cobblestone village street at night: half-timbered houses with pumpkins in every window, hanging oil lanterns, a bell tower and a clock face, a black cat on a wall, wisps of fog, and shopfronts decorated with bats and garlands.
+5. A wooden pier on a foggy lake: planks gleaming with moisture, a rowboat tied at the end, lanterns on the posts, silhouetted pines on the far shore, a pale moon reflection on still black water, and dead reeds.
+6. A hilltop pumpkin patch at midnight: hundreds of pumpkins in rows lit from within, a crooked old tree with a rope swing, a barn silhouette, rolling hills under a bright moon, stars scattered in a deep blue sky, and low fog in the valleys.
+7. A covered bridge on a country road: old red timbers, hanging lanterns inside, a stream below with floating autumn leaves, a mist rising from the water, scattered pumpkins at each end, and an overhead moon peeking through branches.
+8. A neighbourhood street on trick-or-treat night: houses all decorated, inflatable ghosts and giant spiders on lawns, small groups of costumed kids in the blurred distance, glowing porch lights, leaves skittering, and streetlights haloed with mist.
+9. A ruined stone abbey on a windswept hill: tall broken arches, ivy, wild grass, candle lanterns set among the stones, ravens circling, heavy clouds parting for a bright moon, and a winding gravel path.
+10. A rain-slicked city alley at night: reflective puddles, neon signs in orange and purple, paper lanterns strung overhead, steam rising from a grate, a black cat on a fire escape, posters of monster movies on brick, and a glowing doorway at the end.
+
+======================================================================
+SCENARIO 5 - STANDING IN FRONT OF A HAUNTED HOUSE
+======================================================================
+Keep both people exactly as they appear in the reference photo, same faces, same hair, same ages. Each wears a different, random warm autumn outfit with a spooky touch, such as a Halloween-print flannel, a cobweb scarf, a witch's hat, a cape, or a themed sweatshirt, never matching each other. Medium-wide shot at eye level, the two standing close together in the foreground, smiling at the camera, with a large haunted house filling the background behind them. Keep the house clearly visible and dramatic, with its windows, roofline and entrance in frame. Realistic photograph, moonlight and warm lantern light, shallow depth of field. One single photograph, not two panels. Setting: <scene description>
+
+Ideas:
+1. A towering Victorian mansion on a hill: steep gabled roofs and a crooked tower, peeling grey paint, a wraparound porch with sagging boards, a few windows glowing sickly yellow, a rusted wrought-iron gate hanging open, bare black trees clawing at a full moon, and low fog curling across an overgrown lawn.
+2. A crumbling gothic manor with stone walls: pointed arch windows with shattered stained glass, ivy swallowing one whole wing, stone gargoyles on the roofline, a heavy oak front door slightly ajar with candlelight leaking out, a gravel drive lined with dead hedges, and ravens perched along the gutters.
+3. A weathered farmhouse in a dead cornfield: a leaning two-story house with a sunken porch roof and boarded-up windows, a rusted windmill creaking nearby, a scarecrow standing at the edge of the yard, a barn silhouette behind it, a few dim lantern lights in the upper windows, and a bruised purple-orange sunset sky.
+4. An abandoned asylum-style brick building: long rows of dark barred windows, a central clock tower with its clock stopped, a cracked stone staircase up to the entrance, flickering green light from one ground-floor window, rusty fencing wrapped in vines, and a heavy mist rolling across the courtyard.
+5. A creepy cabin deep in a pine forest: a dark timber lodge with moss on the roof, a lone red lantern hanging from the porch, antlers and old chains over the door, a woodpile tipped over, glowing eyes just visible in the tree line, a narrow dirt path of fallen leaves, and a pale moon through the treetops.
+6. A hilltop castle-like house at storm time: dark turrets and spires against rolling thunderclouds, a bolt of lightning forking behind the tallest tower, wind-whipped trees, an arched entrance glowing with orange firelight, a long stone bridge approach, and rain mist drifting over the grass.
+7. A haunted house on a foggy seaside cliff: a lonely grey clapboard house with a widow's-walk balcony, salt-bleached shingles, a swinging porch lantern, crashing waves below the cliff edge, a leaning picket fence, a lighthouse beam sweeping across the fog, and cold blue moonlight.
+8. A decorated "haunted house attraction" at a Halloween festival: an elaborate facade with glowing red windows, animatronic skeletons in the upper windows, a long queue rope and a hand-painted entrance sign, orange and purple floodlights, smoke jets at the doorway, hay bales, and excited costumed visitors blurred in the line behind.
+9. A neighborhood house that goes all out for Halloween: a regular two-story home turned into a monster house with a giant inflatable spider on the roof, ghost sheets across the trees, tombstones all over the lawn, a coffin on the porch, projected ghost faces in the windows, green floodlights, and a fog machine haze over the yard.
+10. A snowy ruined manor in an early frost: a roofless stone mansion with empty window frames, a dusting of first snow on the broken steps and on the dead hedges, a faint orange light moving in a high window, icicles on the porch eaves, deep blue twilight, and a thin silver moon over the chimneys.
