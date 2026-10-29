@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QCheckBox, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
     QSplitter, QTextEdit, QVBoxLayout, QWidget,
 )
 
@@ -21,6 +21,11 @@ from media_tools import extract_embedded_prompt, probe
 from ui.prompt_history import describe_timing, find_entry_for_result, format_entry
 from ui.styles import COLORS
 from ui.widgets import MediaBrowser, NoScrollComboBox
+from workflow_folders import apply_sort, folder_rel, library_workflow_folders, plan_sort
+
+SCOPE_ALL = "*all"        # every video under the Library folder, workflow folders included
+SCOPE_LOOSE = "*loose"    # only the videos lying directly in the Library folder
+SCOPE_PREFIX = "wf:"      # "wf:<folder>" = one workflow's folder
 
 
 def _entry_from_embedded(prompt_data: dict) -> dict:
@@ -83,6 +88,7 @@ class LibraryTab(QWidget):
     send_to_extend = pyqtSignal(object)      # Path
     reuse_requested = pyqtSignal(object, object, object)  # result video Path, workflow Path, history entry dict
     folder_changed = pyqtSignal(str)
+    files_moved = pyqtSignal()               # videos were rearranged on disk (Sort into workflow folders)
 
     DATE_MODES = [("all", "All dates"), ("year", "Year"), ("month", "Month"), ("day", "Day")]
 
@@ -91,6 +97,8 @@ class LibraryTab(QWidget):
         self._cfg = config
         self._ffmpeg_getter = ffmpeg_getter
         self._detail_hit: tuple[Path, dict] | None = None
+        self._active_rel = ""                 # folder of the workflow selected on the active tab
+        self._shown: tuple[str, bool] | None = None
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 8)
@@ -111,6 +119,29 @@ class LibraryTab(QWidget):
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(0, 0, 0, 0)
         left_lay.setSpacing(6)
+
+        scope_row = QHBoxLayout()
+        scope_row.setSpacing(6)
+        scope_lbl = QLabel("Workflow:")
+        scope_lbl.setStyleSheet(f"color: {COLORS['accent_hover']}; font-weight: bold;")
+        scope_row.addWidget(scope_lbl)
+        self._scope_combo = NoScrollComboBox()
+        self._scope_combo.setMinimumWidth(320)
+        self._scope_combo.setToolTip(
+            "Each workflow saves its videos in its own folder under the Library folder.\n"
+            "Pick one workflow's videos, every workflow together, or the loose videos that "
+            "were saved before the folders existed.")
+        self._scope_combo.activated.connect(self._on_scope_picked)
+        scope_row.addWidget(self._scope_combo, stretch=1)
+        self._follow_chk = QCheckBox("Follow the active workflow")
+        self._follow_chk.setToolTip(
+            "On: switching workflow on the Image / Video / Text tab switches this list to that "
+            "workflow's videos, so you can compare against what it already made.\n"
+            "Picking something else from the list turns this off.")
+        self._follow_chk.setChecked(bool(config.get("library_follow", True)))
+        self._follow_chk.toggled.connect(self._on_follow_toggled)
+        scope_row.addWidget(self._follow_chk)
+        left_lay.addLayout(scope_row)
 
         filt_row = QHBoxLayout()
         filt_row.setSpacing(6)
@@ -188,6 +219,16 @@ class LibraryTab(QWidget):
         row2.addWidget(del_btn)
         row2.addStretch()
         bl.addLayout(row2)
+        row3 = QHBoxLayout()
+        sort_btn = QPushButton("🗂 Sort into workflow folders…")
+        sort_btn.setObjectName("secondary_btn")
+        sort_btn.setToolTip(
+            "Move the videos lying loose in the Library folder into the folder of the workflow "
+            "that made them (found through each workflow's prompt history). Shows what will move first.")
+        sort_btn.clicked.connect(self._sort_into_folders)
+        row3.addWidget(sort_btn)
+        row3.addStretch()
+        bl.addLayout(row3)
         rl.addWidget(btn_group)
 
         info_group = QGroupBox("Selected video")
@@ -226,10 +267,13 @@ class LibraryTab(QWidget):
         return (self._cfg.get("library_dir", "") or "").strip() or (self._cfg.get("output_dir", "") or "").strip()
 
     def set_folder(self, folder: str):
-        self.browser.set_folder(folder)
+        # The Library folder is the root; what the grid lists is the picked scope inside it.
+        self._rebuild_scopes()
+        self._apply_scope(force=True)
 
     def refresh(self):
-        self.browser.refresh()
+        self._rebuild_scopes()
+        self._apply_scope(force=True)
 
     def shutdown(self):
         self.browser.shutdown()
@@ -238,6 +282,119 @@ class LibraryTab(QWidget):
         self._cfg.set("library_dir", folder)
         self._cfg.save()
         self.folder_changed.emit(folder)
+        self._rebuild_scopes()
+        self._apply_scope(force=True)
+
+    # -- which workflow's videos the grid lists ---------------------------- #
+
+    def follow_workflow(self, workflow_rel: str):
+        """A tab's workflow changed: list that workflow's videos (when following)."""
+        self._active_rel = folder_rel(workflow_rel)
+        if self._follow_chk.isChecked() and self._active_rel:
+            self._rebuild_scopes(select=SCOPE_PREFIX + self._active_rel)
+            self._apply_scope()
+
+    def _rebuild_scopes(self, select: str | None = None):
+        """Fill the Workflow dropdown: All, Unsorted, then every folder that holds
+        videos — plus the active workflow's, which has none until its first run."""
+        keep = select if select is not None else self._scope_combo.currentData()
+        root = self.effective_folder()
+        folders = library_workflow_folders(root) if root and Path(root).is_dir() else []
+        if self._active_rel and self._active_rel not in folders:
+            folders.append(self._active_rel)
+        self._scope_combo.blockSignals(True)
+        self._scope_combo.clear()
+        self._scope_combo.addItem("All workflows", SCOPE_ALL)
+        self._scope_combo.addItem("Unsorted — loose in the Library folder", SCOPE_LOOSE)
+        for f in sorted(folders, key=str.lower):
+            self._scope_combo.addItem(f, SCOPE_PREFIX + f)
+        idx = self._scope_combo.findData(keep) if keep else -1
+        self._scope_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._scope_combo.blockSignals(False)
+
+    def _scope_target(self) -> tuple[str, bool]:
+        """(folder to list, include subfolders)"""
+        root = self.effective_folder()
+        scope = self._scope_combo.currentData() or SCOPE_ALL
+        if scope == SCOPE_ALL:
+            return root, True
+        if scope == SCOPE_LOOSE:
+            return root, False
+        return str(Path(root) / scope[len(SCOPE_PREFIX):]) if root else "", False
+
+    def _apply_scope(self, force: bool = False):
+        target = self._scope_target()
+        if target == self._shown and not force:
+            return
+        self._shown = target
+        scope = self._scope_combo.currentData() or ""
+        self.browser.missing_text = ("No videos yet for this workflow"
+                                     if scope.startswith(SCOPE_PREFIX) else None)
+        self.browser.set_folder(*target)
+
+    def _on_scope_picked(self, _index: int):
+        """The user chose from the dropdown: following stops unless they picked the active workflow."""
+        picked = self._scope_combo.currentData()
+        if picked != SCOPE_PREFIX + self._active_rel and self._follow_chk.isChecked():
+            self._follow_chk.blockSignals(True)
+            self._follow_chk.setChecked(False)
+            self._follow_chk.blockSignals(False)
+            self._cfg.set("library_follow", False)
+            self._cfg.save()
+        self._apply_scope()
+
+    def _on_follow_toggled(self, on: bool):
+        self._cfg.set("library_follow", bool(on))
+        self._cfg.save()
+        if on:
+            self.follow_workflow(self._active_rel)
+
+    def _sort_into_folders(self):
+        root = self.effective_folder()
+        wf_dir = (self._cfg.get("workflow_dir", "") or "").strip()
+        if not root or not Path(root).is_dir():
+            QMessageBox.information(self, "Sort into workflow folders", "Set the Library / Output folder first.")
+            return
+        plan = plan_sort(wf_dir, root)
+        if not plan.moves:
+            QMessageBox.information(
+                self, "Sort into workflow folders",
+                "Nothing to move: no video lying loose in the Library folder is named in a "
+                f"workflow's prompt history.\n\n{len(plan.unmatched)} loose video(s) have no history entry.")
+            return
+        counts = plan.per_folder()
+        box = QMessageBox(self)
+        box.setWindowTitle("Sort into workflow folders")
+        box.setIcon(QMessageBox.Icon.Question)
+        extra = []
+        if plan.unmatched:
+            extra.append(f"{len(plan.unmatched)} loose video(s) are not named in any prompt history and stay where they are.")
+        if plan.ambiguous:
+            extra.append(f"{len(plan.ambiguous)} are claimed by two workflows and stay where they are.")
+        if plan.clashes:
+            extra.append(f"{len(plan.clashes)} would overwrite a file already in the target folder and stay where they are.")
+        box.setText(f"Move {len(plan.moves)} video(s) into {len(counts)} workflow folder(s) under\n{root}?")
+        box.setInformativeText("\n".join(extra + ["Each video goes to the folder of the workflow whose "
+                                                  "prompt history names it. A list of every move is saved "
+                                                  "in the Library folder."]))
+        detail = [f"{n:>4}  →  {folder}" for folder, n in counts.items()]
+        if plan.unmatched:
+            detail += ["", "Staying (no history entry):"] + [f"   {p.name}" for p in plan.unmatched[:200]]
+        box.setDetailedText("\n".join(detail))
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        if box.exec() != QMessageBox.StandardButton.Yes:
+            return
+        self.browser.deleting.emit([src for src, _dst in plan.moves])     # close any player holding them
+        moved, errors, manifest = apply_sort(plan)
+        self.refresh()
+        self.files_moved.emit()
+        msg = f"Moved {moved} video(s) into workflow folders."
+        if manifest:
+            msg += f"\n\nList of moves: {manifest.name}"
+        if errors:
+            msg += "\n\nCould not move:\n" + "\n".join(errors[:12])
+        QMessageBox.information(self, "Sort into workflow folders", msg)
 
     # ------------------------------------------------------------------ #
 

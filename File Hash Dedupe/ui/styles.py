@@ -82,6 +82,25 @@ QSpinBox {{
     border: 1px solid {COLORS['border']};
     border-radius: 3px;
     padding: 4px;
+    min-height: 22px;
+}}
+QPushButton#small_btn {{
+    padding: 4px 14px;
+    font-size: 9pt;
+}}
+QComboBox {{
+    background-color: {COLORS['bg_light']};
+    color: {COLORS['fg_primary']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 3px;
+    padding: 4px 8px;
+    min-height: 22px;
+    min-width: 140px;
+}}
+QComboBox QAbstractItemView {{
+    background-color: {COLORS['bg_light']};
+    color: {COLORS['fg_primary']};
+    selection-background-color: {COLORS['accent']};
 }}
 QPushButton {{
     background-color: {COLORS['accent']};

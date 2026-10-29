@@ -26,6 +26,10 @@ class ConfigManager:
         "s3_endpoint_url": "",
         "s3_bucket_name": "",
         "s3_loras_prefix": "runpod-slim/ComfyUI/models/loras/",
+        # remote_cleanup.py: after a RunPod segment video is downloaded and its
+        # size verified, delete it from the pod volume through S3. Off by default.
+        "s3_delete_outputs_after_download": False,
+        "s3_output_prefix": "runpod-slim/ComfyUI/output/",
         # RunPod pod control (copied from ComfyUI Video Creator). The API key is
         # NOT here — it lives in api_keys.json next to the EXE (see runpod_api.py).
         "runpod_gpu_order": [],                # GPU models, best first; outranks runpod_pod_order

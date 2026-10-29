@@ -1,5 +1,10 @@
 # S3 Browser — Changelog
 
+## v1.0.9 (2026-10-08)
+- Added an app icon (`app_icon.ico`, generated with IconMaker: glowing cyan cloud over a folder with up/down arrows on navy; 16/32/48/256 px). Previously the window, taskbar and EXE all showed the default icon.
+- The icon shows on the taskbar (own `AppUserModelID`, so Windows no longer groups it under python.exe), the title bar and every dialog (app-level icon), and is embedded in the EXE for Explorer, desktop shortcuts and the Start menu (`S3Browser.spec` `icon=`).
+- The icon is also bundled as data and resolved through PyInstaller's unpack folder when frozen.
+
 ## v1.0.8 (2026-09-04)
 - Downloads now skip files you already have. If the destination has a file with the same name, the app compares size and MD5 against the object's S3 ETag (RunPod stores the plain content MD5 - verified against a 44MB video) and skips the download when they match, so re-grabbing a batch of clips never leaves `name (1).mp4` duplicates. Different content under the same name is still saved as `name (N).ext`.
 - Objects with a composite multipart ETag (`...-N`, only seen on multi-GB model files) can't be compared without the bytes: those download under a new name, then the copy is hashed and deleted if it turns out identical.

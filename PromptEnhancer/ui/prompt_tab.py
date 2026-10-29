@@ -95,8 +95,9 @@ class PromptTab(QWidget):
         self._model_combo.setFixedHeight(30)
         self._model_combo.setMinimumWidth(240)
 
-        self._refresh_models_btn = QPushButton("⟳")
-        self._refresh_models_btn.setFixedSize(30, 30)
+        self._refresh_models_btn = QPushButton("⟳ Refresh")
+        self._refresh_models_btn.setFixedHeight(30)
+        self._refresh_models_btn.setObjectName("small_btn")
         self._refresh_models_btn.setToolTip("Fetch the live model list from this provider's API")
         self._refresh_models_btn.clicked.connect(self._on_refresh_models)
 

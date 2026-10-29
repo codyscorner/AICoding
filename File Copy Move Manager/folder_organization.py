@@ -59,7 +59,29 @@ class FolderOrganizer:
             except (OSError, ValueError, OverflowError):
                 pass  # Corrupt/zero timestamp — fall back to current date
 
-        # Generate subfolder based on structure
+        return FolderOrganizer._subfolder_for_datetime(dt, structure)
+
+    @staticmethod
+    def subfolder_for_mtime(mtime: float, structure: FolderStructure) -> str:
+        """
+        Same answer as get_destination_subfolder for the date-based structures,
+        but from an mtime the caller already has — no stat() call. The copy
+        planner uses this so scanning 250K files doesn't stat each one twice.
+
+        An unusable timestamp (corrupt, out of range) falls back to today's
+        date, exactly like get_destination_subfolder.
+        """
+        if structure in (FolderStructure.PRESERVE, FolderStructure.FLAT):
+            return ""
+        try:
+            dt = datetime.fromtimestamp(mtime)
+        except (OSError, ValueError, OverflowError):
+            dt = datetime.now()
+        return FolderOrganizer._subfolder_for_datetime(dt, structure)
+
+    @staticmethod
+    def _subfolder_for_datetime(dt: datetime, structure: FolderStructure) -> str:
+        """Format a date into the sub-folder path for a date-based structure."""
         if structure == FolderStructure.BY_YEAR:
             return dt.strftime("%Y")
 

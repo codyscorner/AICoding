@@ -124,9 +124,8 @@ class MainWindow(QMainWindow):
         self.folder_input.setReadOnly(True)
         layout.addWidget(self.folder_input)
 
-        self.browse_btn = QPushButton("...")
+        self.browse_btn = QPushButton("Browse")
         self.browse_btn.setProperty("cssClass", "browse")
-        self.browse_btn.setFixedWidth(40)
         self.browse_btn.clicked.connect(self._browse_folder)
         layout.addWidget(self.browse_btn)
 

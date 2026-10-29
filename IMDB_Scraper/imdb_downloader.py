@@ -1,6 +1,6 @@
-"""IMDB Photo Downloader — GUI v1.2.7"""
+"""IMDB Photo Downloader — GUI v1.2.8"""
 
-VERSION = "1.2.7"
+VERSION = "1.2.8"
 
 import csv
 import json
@@ -105,6 +105,7 @@ STYLESHEET = f"""
         color: {FG_DIM};
         border: 1px solid {BORDER};
         padding: 6px 12px;
+        font-weight: normal;
     }}
     QPushButton#browse_btn:hover {{ background-color: {BG_MED}; color: {FG}; }}
     QListWidget {{
@@ -610,9 +611,8 @@ class MainWindow(QMainWindow):
         self._root_edit = QLineEdit(self._settings.get("root_dir", ""))
         self._root_edit.setPlaceholderText("Select a root download folder...")
         self._root_edit.setReadOnly(True)
-        browse_btn = QPushButton("...")
+        browse_btn = QPushButton("Browse")
         browse_btn.setObjectName("browse_btn")
-        browse_btn.setFixedWidth(40)
         browse_btn.clicked.connect(self._browse_root)
         root_row.addWidget(root_lbl)
         root_row.addWidget(self._root_edit)
@@ -815,8 +815,20 @@ class MainWindow(QMainWindow):
 # ------------------------------------------------------------------ #
 
 if __name__ == "__main__":
+    # Own taskbar identity so Windows doesn't group us under python.exe.
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("IMDBPhotoDownloader.App.1")
+    except Exception:
+        pass
     app = QApplication(sys.argv)
     app.setApplicationName("IMDB Photo Downloader")
+    # Bundled icon: PyInstaller's unpack folder when frozen, else next to the script.
+    from PyQt6.QtGui import QIcon
+    _icon_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "app_icon.ico"
+    _icon = QIcon(str(_icon_path)) if _icon_path.exists() else QIcon()
+    app.setWindowIcon(_icon)
     window = MainWindow()
+    window.setWindowIcon(_icon)
     window.show()
     sys.exit(app.exec())
