@@ -1,5 +1,33 @@
 # Changelog — ComfyUI Video Creator
 
+### v2.20.0
+- **Space queues the selected thumbnail.** On the Image → Video and Video → Extend tabs, with exactly one thumbnail selected and the grid focused, Space does what the Create / Extend button does — so you can click or arrow from image to image and tap Space on each. With several selected, Space does nothing (use the button for multi-select); it also does nothing when the button would be disabled
+
+### v2.19.1
+- **🎬 Scenes… button moved onto the History / Reload / Save to workflow row** instead of a line of its own. The Scenes strip (◀ scene ▶, options, preview) now appears only when the prompt actually contains a `{{tag}}`, so a prompt without markers looks exactly as before
+
+### v2.19.0
+- **Scenes: swap one section of a prompt without leaving the app.** Replaces the round trip through Document Update Placeholder (pick snippet → copy → switch app → Paste from Clipboard → Create). Put `{{tag}}` markers in the prompt (e.g. `…in a {{bedroom}}, lit by {{lights}}…`); each tag has a list of scene snippets, and the one that is *current* is what the marker becomes in the run, in the queue view and in history. The rest of the prompt is untouched
+  - **Scenes strip** under the prompt (Image, Video and Text tabs): one row per tag found in the prompt — ◀ / dropdown / ▶ with `n / total (k used)` — plus a one-line *Sends:* preview of the finished prompt. A tag with no scenes shows red with **＋ Add scenes…**
+  - **Next scene after Create** (on by default): once a run is queued the current scene is marked used (✓) and every tag moves to its next unused scene, so the loop is: select the images for this scene → Create → select the next group → Create. **In order** or **Shuffle (no repeats)**; when every scene has been used it says so and stays put until **↺ Reset used**. Nothing advances if the repeat guard declined the run
+  - **Create refuses to send a literal `{{tag}}`**: a marker with no scene stops the run with a message naming it
+  - **🎬 Scenes…** manager: add/delete tags and snippets, optional name per snippet (list label only, never sent), **Import from Paste** (splits a numbered AI reply into named snippets), **Import Placeholder data.json** (merges tags and snippets, skips ones already present), reset used marks
+  - One library for all tabs, saved on every change to `scenes.json` next to the config. New modules `scenes.py` (no Qt) and `scene_renderer.py` (copied from Document Update Placeholder's `renderer.py`); 11 tests in `test_scenes.py`
+  - 💾 Save to workflow writes the finished text (the scene already filled in), not the marker, so the workflow file stays valid for other tools
+
+### v2.18.2
+- **Fix: images that already had a video stayed in the Image → Video picker.** "Finished" was decided only by the workflow's prompt-history file, and runs started from the Library's Reuse Settings were never written to it. The picker now reads the Library folder itself: a video named `<image name>_<workflow>_<stamp>.mp4` in the workflow's folder hides that image (Show all brings it back; deleting the video puts the image back). History still counts as a backup
+- Runs started from Reuse Settings now record their result on the entry they were reused from (no new history row)
+
+### v2.18.1
+- **Alert sound plays inside the app.** MP3/OGG/FLAC/M4A alert sounds used to open your default media player window; they now play in-process through Qt Multimedia (the same engine as the built-in video player), so nothing external is launched
+
+### v2.18.0
+- **📋 Paste from Clipboard button on the prompt box.** Next to ⤢ Expand on every positive prompt (Image, Video and Text tabs): one click replaces the whole prompt with the text on the clipboard, so there is no more click-in / select-all / paste. If the clipboard has no text it tells you and leaves the prompt as it was. The negative prompt (one-line row) does not get the button
+
+### v2.17.2
+- **Fix: the Library folder's Browse button (…) opened your user folder instead of the Library folder.** With a workflow that has no runs yet, the Library points at that workflow's own folder, which did not exist yet, so the dialog gave up and started in your home folder. Browse now creates that folder first and opens in it; if it cannot be created (drive missing, no permission) it goes up the path to the nearest folder that does exist, and only uses the home folder when nothing on the path is reachable. The Image / Extend pickers' Browse and the folder pickers in Settings work the same way
+
 ### v2.17.1
 - **Fix: the model upload/download progress was wrong for any file over 2 GB.** The progress signal carried the byte counts through a 32-bit integer, so an 18.03 GB upload showed "-1911 MB of 855 MB" and a bar stuck near 99%. The counts now arrive intact: real sizes ("9.02 GB of 18.03 GB"), a bar that matches, and a sensible MB/s and time left. The transfer itself was never affected - only the dialog
 

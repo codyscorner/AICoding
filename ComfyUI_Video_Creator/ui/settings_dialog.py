@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
 )
 
 from config import ConfigManager
+from file_ops import browse_start
 from ui.styles import COLORS
 from ui.widgets import NoScrollComboBox
 from workflow_tools import list_workflows
@@ -503,8 +504,7 @@ class SettingsDialog(QDialog):
         return edit
 
     def _browse_folder(self, edit: QLineEdit):
-        current = edit.text().strip()
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder", current or str(Path.home()))
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder", browse_start(edit.text().strip()))
         if folder:
             edit.setText(folder)
 

@@ -334,6 +334,7 @@ class MainWindow(QMainWindow):
 
     def _wire(self, browser: MediaBrowser, panel: RunPanel, dir_key: str, sort_key: str):
         browser.selection_paths_changed.connect(panel.set_sources)
+        browser.queue_requested.connect(panel.queue_from_shortcut)
         browser.folder_changed.connect(lambda f: (self.config.set(dir_key, f), self.config.save()))
         browser.sort_changed.connect(lambda s: (self.config.set(sort_key, s), self.config.save()))
         self._wire_panel(panel)

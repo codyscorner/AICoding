@@ -23,7 +23,8 @@ from PyQt6.QtWidgets import (
 )
 
 from extend_marks import superseded_clips
-from file_ops import delete_paths, thumbnail_caches
+from file_ops import browse_start, delete_paths, thumbnail_caches
+from processed import stem_token
 from media_tools import IMAGE_EXTS, VIDEO_EXTS, extract_last_frame, extract_thumbnail
 from ui.styles import COLORS
 
@@ -435,6 +436,7 @@ class MediaBrowser(QWidget):
     unhide_requested = pyqtSignal(list)      # list[Path] to bring back
     send_to_library_requested = pyqtSignal(list)
     hide_clips_changed = pyqtSignal(bool)
+    queue_requested = pyqtSignal()           # Space on exactly one selected thumbnail
 
     def __init__(self, kind: str, folder: str, sort_option: str, ffmpeg_getter, parent=None,
                  multi: bool = False, last_frame: bool = True, title: str | None = None, hint: str = "",
@@ -580,7 +582,19 @@ class MediaBrowser(QWidget):
         shortcut = QShortcut(QKeySequence.StandardKey.Delete, self.grid)
         shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         shortcut.activated.connect(self.delete_selected)
+        # Space = the Create/Extend button for a single selected thumbnail, so
+        # you can arrow/click through the grid and queue each one by keyboard.
+        # A shortcut (not keyPressEvent) so it also beats the list's own
+        # Space-toggles-selection behaviour; several selected = do nothing,
+        # so a multi-selection is never queued by a stray tap.
+        space = QShortcut(QKeySequence(Qt.Key.Key_Space), self.grid)
+        space.setContext(Qt.ShortcutContext.WidgetShortcut)
+        space.activated.connect(self._on_space)
         layout.addWidget(self.grid, stretch=1)
+
+    def _on_space(self):
+        if len(self.selected_paths()) == 1:
+            self.queue_requested.emit()
 
     # ------------------------------------------------------------------ #
 
@@ -606,8 +620,8 @@ class MediaBrowser(QWidget):
         return [Path(it.data(Qt.ItemDataRole.UserRole)) for it in items]
 
     def _browse(self):
-        start = self._folder if self._folder and Path(self._folder).is_dir() else str(Path.home())
-        folder = QFileDialog.getExistingDirectory(self, f"Select {self.kind} folder", start)
+        folder = QFileDialog.getExistingDirectory(self, f"Select {self.kind} folder",
+                                                  browse_start(self._folder))
         if not folder:
             return
         if Path(folder).name.lower() == "thumbnails":
@@ -758,7 +772,10 @@ class MediaBrowser(QWidget):
     def _mark_processed(self, item):
         """Hide a tile that already has a finished video, unless Show all is on."""
         key = item.data(Qt.ItemDataRole.UserRole)
-        done = Path(key).name.lower() in self._processed
+        name = Path(key).name.lower()
+        done = name in self._processed
+        if not done and Path(key).suffix.lower() in IMAGE_EXTS:
+            done = stem_token(name) in self._processed     # a video named after it is in the folder
         item.setData(PROCESSED_ROLE, done)
         clip = bool(self._clips_chk is not None and self._clips_chk.isChecked() and key in self._superseded)
         item.setData(CLIP_ROLE, clip)

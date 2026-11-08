@@ -1,6 +1,6 @@
 # ComfyUI Video Creator
 
-Version: 2.17.1
+Version: 2.20.0
 
 Single-shot ComfyUI API workflow runner with a dark red theme. Pick an image, a video to extend, or nothing but a prompt (text → video), pick a workflow JSON, press Run, and the finished video lands in a local folder — from a local ComfyUI or a RunPod pod.
 
@@ -8,6 +8,7 @@ This is a **separate app from the ComfyUI Workflow Chain Automator**. It shares 
 
 ## Features
 
+- **Scenes (`{{tag}}` snippets)** — put a marker like `{{bedroom}}` in a prompt and keep a list of scene descriptions for it (🎬 Scenes…: add, edit, **Import from Paste**, or import a Document Update Placeholder `data.json`). Only that section of the prompt changes: the Scenes strip shows ◀ scene ▶ for each tag, and after a run is queued it marks the scene used and moves to the next unused one (in order or shuffled, never repeating until you ↺ Reset used). Select the images for a scene, Create, select the next group, Create. Stored in `scenes.json` next to the EXE
 - **Image → Video tab** — thumbnail grid of a chosen image folder (sort by name/date; thumbnails cached in `<folder>/thumbnails`), workflow dropdown, prompt editor, Run. **Select several images and Create queues one run per image**, same prompt and settings, in grid order
 - **Video → Extend tab** — thumbnail grid of a chosen video folder. **Select several videos and Extend queues one run per video**, same prompt and settings, in grid order. The selected video feeds the workflow as either:
   - its **last frame** (extracted with ffmpeg) into a `LoadImage` node or a folder loader — works with any image-to-video workflow, or
@@ -128,6 +129,7 @@ Builds with the repo `.venv`, deploys `ComfyUI_Video_Creator.exe`, `app_icon.ico
 | `remote_cleanup.py` | Delete a downloaded result from the RunPod volume over S3 (size-verified, opt-in) |
 | `media_tools.py` | ffmpeg discovery, last frame, thumbnails, probe, concat |
 | `workflow_folders.py` | Per-workflow Library folders + the one-time plan/move that sorts loose videos into them (no Qt) |
+| `scenes.py` / `scene_renderer.py` | Scene snippet library (current/used/advance, import) and the `{{tag}}` substitution + pasted-reply parser (no Qt) |
 | `processed.py` | Which sources one workflow has already turned into a video that is still in the Library |
 | `file_ops.py` | Recycle-Bin delete (shell `SHFileOperation`) + thumbnail-cache cleanup |
 | `ui/` | Dark red theme, thumbnail browsers, run panel, queue view, clone dialog, settings dialog, video player, main window |

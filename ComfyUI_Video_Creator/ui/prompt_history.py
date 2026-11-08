@@ -178,6 +178,20 @@ def append_entry(workflow_path: Path, entry: dict) -> int:
     return len(entries) - 1
 
 
+def find_or_append_entry(workflow_path: Path, entry: dict) -> int:
+    """Index of the entry with this prompt + settings, anywhere in the history;
+    appended only when none exists. Used for runs started from Reuse Settings,
+    which must not add a fresh "attempt" row each time but whose result still
+    has to be recorded so the Library knows which source it came from."""
+    entries = load_history(workflow_path)
+    for i in range(len(entries) - 1, -1, -1):
+        if _same_run(entries[i], entry):
+            return i
+    entries.append(entry)
+    save_history(workflow_path, entries)
+    return len(entries) - 1
+
+
 def entry_matches(a: dict, b: dict) -> bool:
     """Whether two dicts are the same history entry.
 
