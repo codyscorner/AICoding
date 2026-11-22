@@ -1,3 +1,4 @@
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -705,8 +706,29 @@ class MainWindow(QMainWindow):
         next_up = f"{self._queue[0].source_name} ({self._queue[0].workflow_label})" if self._queue else ""
         for p in self._panels.values():
             p.set_queue_status(n, tooltip, next_up)
+        self._refresh_queue_badges()
         if self._queue_dlg is not None:
             self._queue_dlg.set_items(self._active_req, list(self._queue))
+
+    def _refresh_queue_badges(self):
+        """Tag the picker tiles for what's running / waiting, so the queue is visible
+        right on the thumbnails ('▶ RUNNING', '#1', '#2'…; one image queued twice
+        shows both positions)."""
+        per_kind: dict[str, dict] = {"image": {}, "video": {}}
+
+        def add(req, label, running):
+            if req.source_path is None or req.source_kind not in per_kind:
+                return
+            key = os.path.normcase(os.path.normpath(str(req.source_path)))
+            old = per_kind[req.source_kind].get(key)
+            per_kind[req.source_kind][key] = (f"{old[0]} {label}" if old else label, running or bool(old and old[1]))
+
+        if self._active_req is not None:
+            add(self._active_req, "▶ RUNNING", True)
+        for i, req in enumerate(self._queue):
+            add(req, f"#{i + 1}", False)
+        self._image_browser.set_queue_badges(per_kind["image"])
+        self._video_browser.set_queue_badges(per_kind["video"])
 
     def _panel_for(self, req: RunRequest) -> RunPanel:
         return self._panels.get(req.source_kind, self._image_panel)

@@ -1,5 +1,23 @@
 # Changelog — ComfyUI Video Creator
 
+### v2.21.3
+- **Queued sources are tagged on the thumbnails.** On Image → Video (and Video → Extend) every picture that is running or waiting in the queue now carries a badge in its top-left corner: a green **▶ RUNNING** for the active run and amber **#1, #2, #3…** for the waiting ones, in queue order. The badges follow the queue as it changes (a run finishes, you reorder, remove or clear in the Queue window), and a source queued twice shows both positions
+
+### v2.21.2
+- **The seed a video was actually made with is now saved.** A run on *Random* used to be recorded as just "Seed: random" — the real number only appeared in the run log. Each finished run now writes the seed it used into the workflow's `.prompt_history.json`, per result file (new `seeds` map, next to `sources`). The Library details show it (`Seed: 123456789 (random — this is the one this file got)`), the Prompt History dialog lists it beside each result file, and typing a seed number into the history filter finds the run. To compare other videos on the same seed, set Seed to *Fixed* and enter that number
+  - The history row itself still says "Seed random" for a random run, so several runs of one prompt keep sharing one row
+  - Random seeds are now drawn from 0 – 2,147,483,647 (was 0 – 4,294,967,295): the Seed box cannot hold anything larger, so about half of all random seeds could not have been re-entered
+  - Videos made before this version have no recorded seed and still show "Seed: random"
+
+### v2.21.1
+- **Any key or click stops the alert sound.** The sound is there to call you in from another room; once you are at the desk it has done its job. While an alert is playing, pressing any key or clicking anywhere in the app silences it immediately (the key or click still does what it normally does — Space on a thumbnail still queues the run). Qt only sees input while the app has focus, so from another program the first click on the Video Creator window is what stops it
+
+### v2.21.0
+- **🧹 Clean up pod folders… (Settings → Models).** One button empties the two folders this app owns on the pod's network volume: `<Output prefix>VideoCreator/` (results — including the first-frame `.png` and `-audio.mp4` intermediates that *Delete results after download* never sees, because the app never downloads them) and `<Input prefix>VideoCreator/` (every source image / video uploaded for a run). It scans first, shows a per-folder count and size, and deletes only after you press **Delete**; a Cancel button stops after the file in flight. Other apps' folders in the bucket (`Merge/`, `image/`, …) and everything on this PC are never touched
+  - Refuses to start while a run or model transfer is in progress (the pod is still reading the input folder)
+  - Deletes one object per request (RunPod rejects bulk deletes) on a background thread with live progress, then removes the now-empty run folders deepest-first; the result is also written to every tab's log
+  - New `s3_input_prefix` setting (default `runpod-slim/ComfyUI/input/`); the S3 client code shared with the per-run delete moved into `remote_cleanup.make_client()`
+
 ### v2.20.0
 - **Space queues the selected thumbnail.** On the Image → Video and Video → Extend tabs, with exactly one thumbnail selected and the grid focused, Space does what the Create / Extend button does — so you can click or arrow from image to image and tap Space on each. With several selected, Space does nothing (use the button for multi-select); it also does nothing when the button would be disabled
 

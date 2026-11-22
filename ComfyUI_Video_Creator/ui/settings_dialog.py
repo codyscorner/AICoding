@@ -4,7 +4,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QPushButton, QRadioButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QRadioButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from config import ConfigManager
@@ -427,6 +427,39 @@ class SettingsDialog(QDialog):
             "Path of ComfyUI's output folder inside the bucket (e.g. runpod-slim/ComfyUI/output/)")
         models_tab.addWidget(clean_group)
 
+        # ── Pod folder cleanup (bulk, on demand) ─────────────────────────
+        folders_group = QGroupBox("Pod volume cleanup — this app's folders")
+        fcl = QVBoxLayout(folders_group)
+        fcl.setSpacing(10)
+        fcl.addWidget(self._caption(
+            f"Everything this app puts on the volume lives in two folders: <Output prefix>{rc.APP_FOLDER}/ "
+            "(results — including the first-frame .png and -audio intermediates the per-run delete above "
+            f"never sees) and <Input prefix>{rc.APP_FOLDER}/ (the source images and videos uploaded for each "
+            "run). Clean up lists both, shows what it found, and only deletes after you confirm. Other apps' "
+            "folders in the bucket are never touched, and nothing on this PC is affected."))
+        self._input_prefix = self._text_row(
+            fcl, "Input prefix:", config.get(rc.CFG_INPUT_PREFIX, rc.DEFAULT_INPUT_PREFIX),
+            "Path of ComfyUI's input folder inside the bucket (e.g. runpod-slim/ComfyUI/input/)")
+        fc_row = QHBoxLayout()
+        fc_row.addStretch()
+        self._cleanup_cancel = QPushButton("Cancel")
+        self._cleanup_cancel.setObjectName("secondary_btn")
+        self._cleanup_cancel.setVisible(False)
+        self._cleanup_cancel.clicked.connect(self._cancel_folder_cleanup)
+        fc_row.addWidget(self._cleanup_cancel)
+        self._cleanup_btn = QPushButton("🧹 Clean up pod folders…")
+        self._cleanup_btn.setObjectName("secondary_btn")
+        self._cleanup_btn.setToolTip("Scan this app's two folders on the pod volume and delete everything in them after confirmation")
+        self._cleanup_btn.clicked.connect(self._start_folder_cleanup)
+        fc_row.addWidget(self._cleanup_btn)
+        fcl.addLayout(fc_row)
+        self._cleanup_status = QLabel("")
+        self._cleanup_status.setWordWrap(True)
+        self._cleanup_status.setObjectName("status_dim")
+        fcl.addWidget(self._cleanup_status)
+        models_tab.addWidget(folders_group)
+        self._cleanup_worker = None
+
         for lay in (server_tab, folders_tab, runpod_tab, prompt_tab, models_tab):
             lay.addStretch()
 
@@ -824,6 +857,97 @@ class SettingsDialog(QDialog):
             self._test_status.setText(f"Failed: {type(e).__name__}: {e}")
             self._test_status.setStyleSheet(f"color: {COLORS['error']};")
 
+    # ------------------------------------------------------------------ #
+    # Pod folder cleanup
+    # ------------------------------------------------------------------ #
+
+    def _cleanup_cfg(self) -> dict:
+        import remote_cleanup as rc
+        cfg = self._s3_config_from_fields()
+        cfg[rc.CFG_OUTPUT_PREFIX] = self._output_prefix.text().strip() or rc.DEFAULT_OUTPUT_PREFIX
+        cfg[rc.CFG_INPUT_PREFIX] = self._input_prefix.text().strip() or rc.DEFAULT_INPUT_PREFIX
+        return cfg
+
+    def _set_cleanup_status(self, text: str, colour: str = "fg_dim"):
+        self._cleanup_status.setText(text)
+        self._cleanup_status.setStyleSheet(f"color: {COLORS[colour]};")
+
+    def _start_folder_cleanup(self):
+        import remote_cleanup as rc
+        parent = self.parent()
+        running = getattr(parent, "_generation_running", None)
+        if callable(running) and running():
+            QMessageBox.warning(self, "Run in progress",
+                                "A run (or model transfer) is in progress. The pod reads its source image from "
+                                "the input folder and writes results to the output folder, so cleaning up now "
+                                "could break it.\n\nWait for the queue to finish, then try again.")
+            return
+        self._cleanup_btn.setEnabled(False)
+        self._set_cleanup_status("Scanning the pod volume…")
+        self._cleanup_worker = rc.FolderScanWorker(self._cleanup_cfg(), self)
+        self._cleanup_worker.scanned.connect(self._confirm_folder_cleanup)
+        self._cleanup_worker.failed.connect(self._folder_cleanup_failed)
+        self._cleanup_worker.start()
+
+    def _confirm_folder_cleanup(self, scans: list):
+        import remote_cleanup as rc
+        total_files = sum(s.count for s in scans)
+        total_bytes = sum(s.size for s in scans)
+        if total_files == 0 and not any(s.folders for s in scans):
+            self._cleanup_btn.setEnabled(True)
+            self._set_cleanup_status("Nothing to clean — both folders are already empty.", "success")
+            return
+        lines = [f"{s.label}:  {s.count:,} file(s), {rc.fmt_size(s.size)}"
+                 + (f", {len(s.folders)} folder(s)" if s.folders else "")
+                 + f"\n    {s.prefix}" for s in scans]
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Clean up pod folders")
+        msg.setText(f"Delete {total_files:,} file(s), {rc.fmt_size(total_bytes)} from the pod volume?")
+        msg.setInformativeText("\n".join(lines) + "\n\nThis cannot be undone. Videos already downloaded to this PC are not affected.")
+        yes = msg.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
+        msg.addButton(QMessageBox.StandardButton.Cancel)
+        msg.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        msg.exec()
+        if msg.clickedButton() is not yes:
+            self._cleanup_btn.setEnabled(True)
+            self._set_cleanup_status("Cleanup cancelled — nothing deleted.")
+            return
+        self._cleanup_cancel.setVisible(True)
+        self._cleanup_worker = rc.FolderCleanupWorker(self._cleanup_cfg(), scans, self)
+        self._cleanup_worker.progress.connect(self._folder_cleanup_progress)
+        self._cleanup_worker.finished_cleanup.connect(self._folder_cleanup_done)
+        self._cleanup_worker.failed.connect(self._folder_cleanup_failed)
+        self._cleanup_worker.start()
+
+    def _folder_cleanup_progress(self, done: int, total: int, key: str):
+        name = key.rstrip("/").rsplit("/", 1)[-1] if key else ""
+        self._set_cleanup_status(f"Deleting {done:,} / {total:,}…  {name}")
+
+    def _folder_cleanup_done(self, files: int, folders: int, freed: int, errors: list):
+        import remote_cleanup as rc
+        self._cleanup_cancel.setVisible(False)
+        self._cleanup_btn.setEnabled(True)
+        text = f"Deleted {files:,} file(s) ({rc.fmt_size(freed)}) and {folders} folder(s) from the pod volume."
+        if errors:
+            text += f"  {len(errors)} failed — first: {errors[0]}"
+            self._set_cleanup_status(text, "warning")
+        else:
+            self._set_cleanup_status(text, "success")
+        log = getattr(self.parent(), "_log_everywhere", None)
+        if callable(log):
+            log("Pod folder cleanup: " + text)
+
+    def _folder_cleanup_failed(self, err: str):
+        self._cleanup_cancel.setVisible(False)
+        self._cleanup_btn.setEnabled(True)
+        self._set_cleanup_status(f"Failed: {err}", "error")
+
+    def _cancel_folder_cleanup(self):
+        if self._cleanup_worker is not None:
+            self._cleanup_worker.cancel()
+            self._set_cleanup_status("Cancelling after the current file…")
+
     def _save(self):
         c = self._config
         c.set("mode", "runpod" if self._runpod_radio.isChecked() else "local")
@@ -862,6 +986,7 @@ class SettingsDialog(QDialog):
         import remote_cleanup as rc
         c.set(rc.CFG_DELETE_AFTER, bool(self._delete_after.isChecked()))
         c.set(rc.CFG_OUTPUT_PREFIX, self._output_prefix.text().strip() or rc.DEFAULT_OUTPUT_PREFIX)
+        c.set(rc.CFG_INPUT_PREFIX, self._input_prefix.text().strip() or rc.DEFAULT_INPUT_PREFIX)
         for key, value in self._s3_config_from_fields().items():
             c.set(key, value)
         c.save()

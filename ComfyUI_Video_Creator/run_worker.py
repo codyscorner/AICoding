@@ -31,6 +31,10 @@ logger.setLevel(logging.DEBUG)
 RUN_LOG_NAME = "video_creator_run.log"
 RUN_DELIM = "=== New run started ==="
 
+# Largest seed the app uses — the top of the Seed spin box (a QSpinBox is a
+# signed 32-bit int).
+MAX_SEED = 2_147_483_647
+
 
 @dataclass
 class RunRequest:
@@ -170,7 +174,9 @@ class RunWorker(QThread):
                 if slot.name and slot.name != "None":
                     strengths = ", ".join(f"{v:g}" for v in slot.strengths.values()) or "-"
                     self._log(f"LoRA {slot.label}: {slot.name} ({strengths})")
-            seed = req.seed if req.seed is not None else random.randint(0, 2**32 - 1)
+            # Random stays inside what the Seed box can hold, so the number
+            # recorded for this file can always be typed back in as Fixed.
+            seed = req.seed if req.seed is not None else random.randint(0, MAX_SEED)
             n_seed = apply_seed(workflow, seed)
             if n_seed:
                 self._log(f"Seed: {seed} ({n_seed} field{'s' if n_seed != 1 else ''})")
@@ -269,7 +275,11 @@ class RunWorker(QThread):
                 results.append(str(stitched))
 
             timing = run_timing(time.time() - t0, render_seconds, steps.result())
-            done = f"Done in {_fmt(timing['run_seconds'])} (render {_fmt(timing['render_seconds'])}"
+            if n_seed:
+                # The seed that really went to the server (the request only
+                # says "random") — history stores it per result file.
+                timing["seed"] = seed
+            done =f"Done in {_fmt(timing['run_seconds'])} (render {_fmt(timing['render_seconds'])}"
             if "step_seconds" in timing:
                 done += f", {timing['sampler_steps']} steps @ {timing['step_seconds']:.2f} s/step"
             self._log(done + ")")

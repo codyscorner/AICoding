@@ -264,7 +264,9 @@ def add_results(workflow_path: Path, index: int, results: list[str],
     ``sampler_seconds``), so older entries simply lack them. ``source`` is
     the image/video this particular run started from; it is stored per
     result file in ``sources`` so one entry can hold runs over several
-    images and the Library still shows the right one for each file."""
+    images and the Library still shows the right one for each file. A
+    ``seed`` key in ``timing`` is the seed the run actually used and is
+    stored the same way, in ``seeds`` (v2.21.2)."""
     entries = load_history(workflow_path)
     if 0 <= index < len(entries):
         existing = entries[index].setdefault("results", [])
@@ -275,6 +277,13 @@ def add_results(workflow_path: Path, index: int, results: list[str],
             sources = entries[index].setdefault("sources", {})
             for r in results:
                 sources[r] = source
+        if timing and isinstance(timing.get("seed"), int):
+            # The seed this run really used, per file. ``settings.seed`` stays
+            # as chosen (None = random) so runs of one prompt still share an
+            # entry; this is what tells you which number a random run got.
+            seeds = entries[index].setdefault("seeds", {})
+            for r in results:
+                seeds[r] = timing["seed"]
         for key in ("run_seconds", "render_seconds", "sampler_steps", "step_seconds", "sampler_seconds"):
             if timing and timing.get(key) is not None:
                 entries[index][key] = timing[key]
@@ -349,6 +358,17 @@ def source_for_result(e: dict, result: str) -> str:
     return ((e.get("sources") or {}).get(result) or e.get("source") or "") if result else ""
 
 
+def seed_for_result(e: dict, result: str | None) -> int | None:
+    """The seed that actually made ``result``: the per-file record when the
+    run stored one (v2.21.2+), else the entry's fixed seed, else None (a
+    random run from before seeds were recorded)."""
+    used = (e.get("seeds") or {}).get(result) if result else None
+    if isinstance(used, int):
+        return used
+    fixed = (e.get("settings") or {}).get("seed")
+    return fixed if isinstance(fixed, int) else None
+
+
 def format_entry(e: dict, result: str | None = None) -> str:
     """Multi-line human-readable dump of one history entry.
 
@@ -377,7 +397,13 @@ def format_entry(e: dict, result: str | None = None) -> str:
         lines.append("── Settings ──")
         lines.append(f"Workflow: {s.get('workflow', '?')}   Mode: {s.get('mode', '?')}")
         seed = s.get("seed")
-        lines.append(f"Seed: {seed if seed is not None else 'random'}")
+        used = seed_for_result(e, result)
+        if seed is not None:
+            lines.append(f"Seed: {seed}")
+        elif used is not None:
+            lines.append(f"Seed: {used}   (random — this is the one this file got)")
+        else:
+            lines.append("Seed: random")
         if s.get("steps") is not None:
             lines.append(f"Steps: {s['steps']}")
         if s.get("megapixels") is not None:
@@ -396,7 +422,8 @@ def format_entry(e: dict, result: str | None = None) -> str:
         lines.append("")
     if e.get("results"):
         lines.append("── Results ──")
-        lines += e["results"]
+        seeds = e.get("seeds") or {}
+        lines += [f"{r}   (seed {seeds[r]})" if isinstance(seeds.get(r), int) else r for r in e["results"]]
     return "\n".join(lines)
 
 
@@ -785,7 +812,8 @@ class PromptHistoryDialog(QDialog):
     def _entry_text(rel: str, e: dict) -> str:
         parts = [rel, e.get("positive", ""), e.get("negative", ""), describe_settings(e.get("settings")),
                  " ".join(e.get("results", []) or []), e.get("source", "") or "",
-                 " ".join((e.get("sources") or {}).values())]
+                 " ".join((e.get("sources") or {}).values()),
+                 " ".join(f"seed {v}" for v in (e.get("seeds") or {}).values())]
         for p in (e.get("prompts") or {}).values():
             parts.append(p.get("text", ""))
         return "\n".join(parts).lower()

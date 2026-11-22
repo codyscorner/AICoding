@@ -172,7 +172,9 @@ class NoScrollComboBox(QComboBox):
 
 
 PROCESSED_ROLE = Qt.ItemDataRole.UserRole + 1     # True on a tile that already has a finished video
-CLIP_ROLE = Qt.ItemDataRole.UserRole + 2          # True on a short extension clip whose complete video exists
+BASE_ROLE = Qt.ItemDataRole.UserRole + 3          # the tile's thumbnail without any queue badge
+BADGE_ROLE = Qt.ItemDataRole.UserRole + 4         # the queue tag text currently stamped on the tile
+CLIP_ROLE = Qt.ItemDataRole.UserRole + 2         # True on a short extension clip whose complete video exists
 
 
 class ThumbnailGrid(QListWidget):
@@ -205,10 +207,40 @@ class ThumbnailGrid(QListWidget):
         painter.drawPixmap((THUMB_SIZE - pix.width()) // 2, (THUMB_SIZE - pix.height()) // 2, pix)
         painter.end()
         item = QListWidgetItem(QIcon(canvas), label)
+        item.setData(BASE_ROLE, canvas)         # the clean thumbnail, so a queue badge can be added/removed
         item.setData(Qt.ItemDataRole.UserRole, key)
         item.setToolTip(key)
         item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
         self.addItem(item)
+
+    @staticmethod
+    def set_badge(item, text: str, running: bool = False):
+        """Stamp a queue tag ('#2', '▶ RUNNING') on the tile's corner; '' clears it."""
+        if (item.data(BADGE_ROLE) or "") == text:
+            return
+        item.setData(BADGE_ROLE, text)
+        base = item.data(BASE_ROLE)
+        if base is None:
+            return
+        if not text:
+            item.setIcon(QIcon(base))
+            return
+        pix = QPixmap(base)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = p.font()
+        font.setBold(True)
+        font.setPointSize(10)
+        p.setFont(font)
+        w = p.fontMetrics().horizontalAdvance(text) + 16
+        h = p.fontMetrics().height() + 6
+        p.setPen(QColor("white"))
+        p.setBrush(QColor("#1e8e3e" if running else "#d97706"))
+        p.drawRoundedRect(6, 6, w, h, 6, 6)
+        p.drawText(6, 6, w, h, Qt.AlignmentFlag.AlignCenter, text)
+        p.end()
+        item.setIcon(QIcon(pix))
+        item.setToolTip(f"{item.data(Qt.ItemDataRole.UserRole)}\n{'Running now' if running else 'In the queue'}: {text}")
 
     def selected_key(self) -> str | None:
         items = self.selectedItems()
@@ -767,7 +799,21 @@ class MediaBrowser(QWidget):
 
     def _add_item(self, img, key: str, label: str):
         self.grid.add_item(img, key, label)
-        self._mark_processed(self.grid.item(self.grid.count() - 1))
+        item = self.grid.item(self.grid.count() - 1)
+        self._mark_processed(item)
+        self._badge_item(item)
+
+    def set_queue_badges(self, badges: dict):
+        """{normalised source path: (text, running)} — tags every tile whose file is
+        running or waiting in the queue; tiles not in the map lose their tag."""
+        self._badges = badges
+        for i in range(self.grid.count()):
+            self._badge_item(self.grid.item(i))
+
+    def _badge_item(self, item):
+        text, running = getattr(self, "_badges", {}).get(
+            os.path.normcase(os.path.normpath(item.data(Qt.ItemDataRole.UserRole))), ("", False))
+        self.grid.set_badge(item, text, running)
 
     def _mark_processed(self, item):
         """Hide a tile that already has a finished video, unless Show all is on."""
