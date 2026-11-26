@@ -36,7 +36,7 @@ class PreviewDialog(QDialog):
         action_word = "delete" if permanent_delete else "move"
         title = "Review Matches" if compare_mode else "Review Duplicates"
         self.setWindowTitle(title)
-        self.resize(700, 500)
+        self.resize(900, 600)
 
         layout = QVBoxLayout(self)
 
@@ -56,6 +56,8 @@ class PreviewDialog(QDialog):
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["File", "Role", "Size"])
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.tree, stretch=1)
 
         note = "Reference folder (A) files are never modified." if compare_mode else \
@@ -81,40 +83,47 @@ class PreviewDialog(QDialog):
         self._rebuild_tree()
 
     def _rebuild_tree(self) -> None:
+        self.tree.setUpdatesEnabled(False)       # big drives can produce tens of thousands of rows
         self.tree.clear()
 
-        duplicate_count = 0
-        reclaimable_bytes = 0
+        remove_paths = {entry.path for _, entry in self.scan_result.to_remove}
+        duplicate_count = len(remove_paths)
+        reclaimable_bytes = sum(entry.size for _, entry in self.scan_result.to_remove)
 
+        # Groups and their members arrive in SQL rank order: largest files first, kept copy first
         for file_hash, entries in self.scan_result.groups.items():
             primary = self.scan_result.primary_map[file_hash]
-            group_item = QTreeWidgetItem([f"Group ({len(entries)} copies)", "", _format_size(primary.size)])
+            rows = list(entries)
+            if all(e.path != primary.path for e in rows):      # compare mode: kept file is in folder A
+                rows.insert(0, primary)
+            group_item = QTreeWidgetItem([f"Group ({len(rows)} copies)", "", _format_size(primary.size)])
             group_item.setFlags(group_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
             self.tree.addTopLevelItem(group_item)
 
-            for entry in sorted(entries, key=lambda e: e.path):
-                is_primary = entry.path == primary.path
-                role = "Kept (primary)" if is_primary else "Duplicate"
-                child = QTreeWidgetItem([entry.path, role, _format_size(entry.size)])
-                if not is_primary:
-                    duplicate_count += 1
-                    reclaimable_bytes += entry.size
-                group_item.addChild(child)
+            for entry in rows:
+                if entry.path in remove_paths:
+                    role = "Duplicate"
+                elif entry.path == primary.path:
+                    role = "Kept (reference A)" if self.compare_mode else "Kept (primary)"
+                else:
+                    role = "Kept"
+                group_item.addChild(QTreeWidgetItem([entry.path, role, _format_size(entry.size)]))
 
             group_item.setExpanded(True)
+        self.tree.setUpdatesEnabled(True)
 
         if self.compare_mode:
             self.summary_label.setText(
-                f"{len(self.scan_result.groups)} file(s) in the target folder already exist in the reference folder "
+                f"{duplicate_count:,} file(s) in the target folder already exist in the reference folder "
                 f"— {_format_size(reclaimable_bytes)} reclaimable"
             )
         else:
             self.summary_label.setText(
-                f"{len(self.scan_result.groups)} duplicate group(s), {duplicate_count} duplicate file(s) "
+                f"{len(self.scan_result.groups):,} duplicate group(s), {duplicate_count:,} duplicate file(s) "
                 f"— {_format_size(reclaimable_bytes)} reclaimable"
             )
 
-        self.proceed_btn.setEnabled(duplicate_count > 0 or self.compare_mode and len(self.scan_result.groups) > 0)
+        self.proceed_btn.setEnabled(duplicate_count > 0)
 
     def get_scan_result(self) -> ScanResult:
         return self.scan_result

@@ -1,5 +1,18 @@
 # Changelog — Desktop Video Browser
 
+## Unreleased
+- **Icon-only buttons now have a short text label.** Buttons that showed only a symbol (↻, …, 🎲, 🗑 and so on) now read e.g. "↻ Refresh" or "Browse" in regular-weight, regular-size text; their fixed widths were dropped so they size to their label. Covers: the player's ▶ Play / ⏸ Pause, ■ Stop and ⛶ Full screen.
+
+## [1.3.3] — 2026-10-17
+
+### Added
+- Right-click a folder in the tree for "Open in Explorer" (opens that folder in a Windows Explorer window, e.g. to copy its files to a thumb drive) and "Copy Folder Path". Acts on the folder under the cursor without changing the current selection or reloading the file list.
+
+## [1.3.2] — 2026-10-17
+
+### Fixed
+- "Open Folder..." now opens its dialog in the folder highlighted in the tree view. It previously passed no start directory, so Windows fell back to the process's working directory — in the built EXE, the EXE's own folder. Falls back to the currently loaded folder if nothing is highlighted.
+
 ## [1.3.1] — 2026-09-07
 
 ### Added

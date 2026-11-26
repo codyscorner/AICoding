@@ -31,6 +31,8 @@ class FileListPanel(QWidget):
         self._current_folder: str = ""
         self._files: list[str] = []
         self._sort_mode: str = _DEFAULT_SORT_MODE
+        # Callable returning the folder highlighted in the tree (set by MainWindow).
+        self.start_folder_provider = None
         self.setAcceptDrops(True)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -139,7 +141,17 @@ class FileListPanel(QWidget):
             self.load_folder(self._current_folder)
 
     def _browse_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Open Folder")
+        # Always start the dialog in the folder highlighted in the tree. With no
+        # start dir Windows falls back to the process's working directory, which
+        # in the built EXE is the EXE's own folder.
+        start = self.start_folder_provider() if self.start_folder_provider else ""
+        if not start or not os.path.isdir(start):
+            start = self._current_folder
+        if not start or not os.path.isdir(start):
+            start = ""
+        folder = QFileDialog.getExistingDirectory(
+            self, "Open Folder", os.path.normpath(start) if start else ""
+        )
         if folder:
             self.load_folder(folder)
             self.folderOpened.emit(folder)

@@ -1,9 +1,11 @@
 # File Hash Dedupe
 
-A desktop application that finds and removes duplicate files based on content hash (MD5).
+A desktop application that finds and removes duplicate files based on content hash (MD5 or BLAKE2b), using a SQLite hash cache.
 
 ## Features
 
+- **SQLite Hash Cache**: every file's full path, size, modified time and hash is stored in `FileHashDedupe_hashes.db` next to the EXE; a rescan only hashes files that are new or changed since the last run
+- **Duplicates Decided in SQL**: every copy of a hash gets a rank with `ROW_NUMBER() OVER (PARTITION BY hash ORDER BY <keep rule>)` - rank 1 is kept, every rank above 1 is moved or deleted (the same method as Burn List Creator)
 - **Fast Parallel Hashing**: Configurable parallel workers for high-speed file hashing
 - **Content-Based Detection**: Identifies duplicates by file content, not just filename
 - **Two Dedupe Modes**: Move duplicates to a `Dupes` subfolder, or permanently delete them
@@ -39,6 +41,22 @@ pyinstaller FileHashDedupe.spec --clean --noconfirm
 ```
 
 ## Version History
+
+### v1.4.0
+- Scan rewritten on SQLite (`hash_db.py`): pass 1 lists every file (one row per full path), the size pre-filter runs as a SQL query, pass 2 hashes only candidates without a cached hash, and duplicates are picked with `ROW_NUMBER()` - rank 1 kept, rank > 1 removed
+- Hash cache persists between runs, per algorithm (MD5 and BLAKE2b cached separately); a file whose size or modified time changed is re-hashed; moved/deleted duplicates and files that vanished are dropped from the cache
+- Cancelling mid-hash keeps every hash finished so far - the next scan picks up where it stopped
+- Changing the keep rule in the review screen is a single SQL re-rank
+- Compare mode refuses overlapping folders (target inside reference or the other way round), which used to make every target file match itself
+- Options box: new "Hash cache" line (cached hashes / files) with a Clear Cache button
+- Review screen: compare mode now shows the kept reference (A) file at the top of each group; groups are listed largest files first; dialog is larger and builds faster on big result sets
+- Long paths (> 260 chars) handled for hashing, moving and deleting
+- First test suite: `tests/test_hasher.py` (16 tests)
+
+### v1.3.1
+- Options box spaced out: rows no longer get squeezed together when the window is short — the box keeps its natural height and the Status log shrinks instead
+- Hash algorithm / Keep dropdowns are now styled (they were collapsing to thin bars), and the workers spinbox is taller and wider
+- Window minimum height raised to 760 px (still fits a 1080p screen)
 
 ### v1.3.0
 - Preview/review screen before any move or delete — shows every duplicate group with the chosen primary highlighted; keep rule (First alphabetical / Oldest / Newest / Shortest path) can be changed live in the dialog to recompute the survivor without re-hashing

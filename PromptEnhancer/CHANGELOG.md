@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- **Icon-only buttons now have a short text label.** Buttons that showed only a symbol (↻, …, 🎲, 🗑 and so on) now read e.g. "↻ Refresh" or "Browse" in regular-weight, regular-size text; their fixed widths were dropped so they size to their label. Covers: ⟳ Refresh next to the model picker.
+
 ## v1.0.1 (2026-08-22)
 - **Live model list**: refresh button next to the model picker fetches each provider's current models from their API (Anthropic `/v1/models`, Gemini `/v1beta/models`, Groq and OpenRouter's OpenAI-compatible `/models`) instead of relying only on the static curated list. OpenRouter's list is filtered to free-tagged models and works without an API key (public endpoint).
 - AI-generated app icon.

@@ -16,9 +16,11 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 
 from config import ConfigManager
-from file_operations import FileCopier, FileScanner, FileValidator, format_file_size
+from copy_plan import PlanCancelled
+from file_operations import FileCopier, format_file_size, summarize_results
 from folder_organization import FolderStructure, FolderOrganizer
 from ui.styles import COLORS
+from ui.verbs import mode_verbs
 
 
 _SHOW_PREFIXES = (
@@ -26,6 +28,7 @@ _SHOW_PREFIXES = (
     "Reading", "Gathering", "Checking", "Starting", "Sorting",
     "Duplicate found:", "Operation cancelled", "Start:",
     "Retry ", "CHECKSUM", "Warning: source not deleted",
+    "Comparing", "Plan:", "Nothing to", "Note:",
 )
 
 # Copy-order dropdown labels → internal sort_order value passed to the scanner.
@@ -363,8 +366,8 @@ class MultiSourceTab(QWidget):
 
     def set_mode(self, mode: str):
         self.mode = mode
-        verb = "Move" if mode == 'move' else "Copy"
-        self.copied_title_label.setText(f"Total {verb}d:")
+        verb, past = mode_verbs(mode)
+        self.copied_title_label.setText(f"Total {past}:")
         self.options_section_label.setText(f"{verb} Options")
         self.run_btn.setText(f"{verb} All Sources")
 
@@ -517,15 +520,16 @@ class MultiSourceTab(QWidget):
         number_duplicates = self.number_check.isChecked()
 
         # Warn when using a custom folder structure (not preserve) and duplicate renaming is off.
-        # Files from different source folders with the same name will land in the same destination
-        # subfolder and silently overwrite each other unless we auto-increment.
+        # Files from different source folders with the same name land in the same destination
+        # subfolder; with numbering off only the first one is copied and the others are skipped.
         if not preserve and not number_duplicates:
             msg = (
                 "You are using a custom folder structure (not preserving the original paths).\n\n"
-                "Files from different source folders that share the same filename will be written "
-                "to the same destination subfolder and will overwrite each other.\n\n"
+                "Different files from different source folders that share the same filename "
+                "will want the same destination name. With numbering off, only the first one is "
+                "copied and the others are skipped (nothing is overwritten).\n\n"
                 "Would you like to automatically rename duplicates "
-                "(e.g. photo_001.jpg, photo_002.jpg) to prevent overwrites?"
+                "(e.g. photo_001.jpg, photo_002.jpg) so that every file is kept?"
             )
             reply = QMessageBox.question(
                 self,
@@ -600,63 +604,6 @@ class MultiSourceTab(QWidget):
             self._add_status("Cancellation requested — stopping after current files")
 
     # ── Worker Thread ────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _pre_filter_incremental(files: list, source_folder: str, options: dict) -> list:
-        """
-        Source-first incremental comparison:
-        1. Build expected dest path for every source file.
-        2. Walk the destination once into a {path: (size, mtime)} index.
-        3. Compare source list against index — return only files that need copying.
-        """
-        dest_folder = options['dest_folder']
-        preserve = options['preserve_structure']
-        organizer = FolderOrganizer()
-        try:
-            folder_structure = FolderStructure(options['folder_structure'])
-        except ValueError:
-            folder_structure = FolderStructure.FLAT
-
-        # Step 1: compute expected destination path for each source file (source-first)
-        source_entries = []  # [(full_path, rel_path, size, expected_dest_path)]
-        for full_path, rel_path, size in files:
-            filename = os.path.basename(full_path)
-            if preserve:
-                rel_dir = os.path.dirname(rel_path)
-                final_dest = os.path.join(dest_folder, rel_dir) if rel_dir else dest_folder
-            else:
-                subfolder = organizer.get_destination_subfolder(
-                    full_path, folder_structure, source_folder, use_file_date=True
-                )
-                final_dest = os.path.join(dest_folder, subfolder) if subfolder else dest_folder
-            source_entries.append((full_path, rel_path, size, os.path.join(final_dest, filename)))
-
-        # Step 2: single walk of destination → build {abs_path: (size, mtime)} index
-        dest_index: dict = {}
-        if os.path.isdir(dest_folder):
-            for root, _dirs, filenames in os.walk(dest_folder):
-                for fname in filenames:
-                    fpath = os.path.join(root, fname)
-                    try:
-                        st = os.stat(fpath)
-                        dest_index[fpath] = (st.st_size, st.st_mtime)
-                    except OSError:
-                        pass
-
-        # Step 3: compare source entries against destination index
-        result = []
-        for full_path, rel_path, size, dest_path in source_entries:
-            if dest_path in dest_index:
-                try:
-                    src_st = os.stat(full_path)
-                    dst_size, dst_mtime = dest_index[dest_path]
-                    if (src_st.st_size == dst_size and abs(src_st.st_mtime - dst_mtime) <= 2.0):
-                        self._logger.info(f"Skipped (unchanged): {rel_path}")
-                        continue  # already up-to-date — skip
-                except OSError:
-                    pass
-            result.append((full_path, rel_path, size))
-        return result
 
     def _log_run_settings(self, options: dict):
         """Write the full set of settings used for this run to the top of the log file."""
@@ -745,34 +692,6 @@ class MultiSourceTab(QWidget):
                     if any(msg.startswith(p) for p in _SHOW_PREFIXES):
                         self._queue_msg('status', f"[{src_idx}/{total_sources}] {msg}")
 
-                # ── Incremental pre-filter ───────────────────────────────────
-                # When incremental is on, scan the full file list first, then
-                # remove files already up-to-date at the destination before any
-                # copy work starts. Workers then only touch files that actually
-                # need copying — no per-file lock contention on skips.
-                pre_scanned = None
-                pre_skip = 0
-                if options.get('incremental'):
-                    patterns = FileValidator.validate_file_mask(options['extension'])
-                    self._queue_msg('status', f"[{src_idx}/{total_sources}] Scanning for new/changed files…")
-                    all_files = FileScanner.get_files_with_patterns(
-                        source, patterns, options['recursive_search'],
-                        min_size_bytes=options.get('min_size_bytes'),
-                        max_size_bytes=options.get('max_size_bytes'),
-                        max_days_old=options.get('max_days_old'),
-                        sort_order=options.get('sort_order', 'largest'),
-                    )
-                    pre_scanned = self._pre_filter_incremental(all_files, source, options)
-                    pre_skip = len(all_files) - len(pre_scanned)
-                    self._queue_msg('status',
-                        f"[{src_idx}/{total_sources}] Found {len(all_files)} files — "
-                        f"{pre_skip} already up-to-date, {len(pre_scanned)} to copy"
-                    )
-                    if pre_skip:
-                        self._queue_msg('source_counters', {
-                            'source_idx': src_idx, 'copied': 0, 'skipped': pre_skip, 'errors': 0
-                        })
-
                 def _fatal_cb(msg, _idx=src_idx, _total=total_sources):
                     self._cancel_requested = True
                     self._queue_msg('fatal_error', {
@@ -785,15 +704,12 @@ class MultiSourceTab(QWidget):
                     number_duplicates=options['number_duplicates'],
                     progress_callback=None,
                     cancel_check=lambda: self._cancel_requested,
-                    counters_callback=lambda c, s, e, _ps=pre_skip: self._queue_msg(
-                        'source_counters', {'source_idx': src_idx, 'copied': c, 'skipped': s + _ps, 'errors': e}
+                    # Counters already include the files the plan skipped.
+                    counters_callback=lambda c, s, e: self._queue_msg(
+                        'source_counters', {'source_idx': src_idx, 'copied': c, 'skipped': s, 'errors': e}
                     ),
                     verify_checksum=options.get('verify_checksum', False),
-                    # Never pass incremental=True to the copier here — _pre_filter_incremental
-                    # already decided which files need copying (source-first scan + dest index
-                    # comparison).  Passing it again causes parallel workers to falsely skip
-                    # files that were just written to the destination by another worker.
-                    incremental=False,
+                    incremental=options.get('incremental', False),
                     move_mode=options.get('operation_mode') == 'move',
                     workers=workers_per_src,
                     sort_order=options.get('sort_order', 'largest'),
@@ -801,6 +717,23 @@ class MultiSourceTab(QWidget):
                         'transfer_update', {'transfer_id': tid, 'filename': fname, 'pct': pct}
                     ),
                     fatal_error_callback=_fatal_cb,
+                    plan_progress_callback=lambda stage, done, total: self._queue_msg('plan_progress', {
+                        'index': src_idx, 'total_sources': total_sources,
+                        'stage': stage, 'done': done, 'total': total,
+                    }),
+                )
+
+                # Decide what happens to every file BEFORE any copying starts: the same planner
+                # the single-source Preview uses. Each destination path then has exactly one
+                # writer, so parallel workers can no longer overwrite or falsely skip each other.
+                # (Planned before the copier joins the watchdog's list: a long comparison
+                # is not "no disk I/O".)
+                plan = copier.build_plan(
+                    source, options['dest_folder'], options['extension'],
+                    options['preserve_structure'], options['recursive_search'],
+                    min_size_bytes=options.get('min_size_bytes'),
+                    max_size_bytes=options.get('max_size_bytes'),
+                    max_days_old=options.get('max_days_old'),
                 )
 
                 with _copier_lock:
@@ -809,20 +742,17 @@ class MultiSourceTab(QWidget):
                     results = copier.copy_files(
                         source, options['dest_folder'], options['extension'],
                         options['preserve_structure'], options['recursive_search'],
-                        min_size_bytes=options.get('min_size_bytes'),
-                        max_size_bytes=options.get('max_size_bytes'),
-                        max_days_old=options.get('max_days_old'),
-                        pre_scanned_files=pre_scanned,
+                        plan=plan,
                     )
                 finally:
                     with _copier_lock:
                         _active_copiers.remove(copier)
 
-                copied  = sum(1 for r in results if r.success and r.destination_file is not None)
-                skipped = sum(1 for r in results if r.success and r.destination_file is None) + pre_skip
-                errors  = sum(1 for r in results if not r.success)
-                copied_bytes = sum(r.file_size for r in results if r.success and r.destination_file is not None)
-                return copied, skipped, errors, copied_bytes
+                summary = summarize_results(results, copier.planned_skips)
+                return summary.copied, summary.skipped, summary.errors, summary.bytes_copied
+
+            except PlanCancelled:
+                return 0, 0, 0, 0          # Cancel pressed while comparing — the loop below stops
 
             except Exception as e:
                 self._logger.error(f"Multi-source error on {source}: {e}")
@@ -883,6 +813,12 @@ class MultiSourceTab(QWidget):
 
                     if msg_type == 'status':
                         self._add_status(data)
+
+                    elif msg_type == 'plan_progress':
+                        self.source_progress_label.setText(
+                            f"Source {data['index']} / {data['total_sources']}:  "
+                            f"{data['stage']}…  {data['done']:,} of {data['total']:,}"
+                        )
 
                     elif msg_type == 'source_start':
                         self._sources_started += 1

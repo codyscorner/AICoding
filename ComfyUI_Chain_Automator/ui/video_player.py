@@ -75,10 +75,10 @@ class VideoPlayerDialog(QDialog):
             QPushButton {{
                 background-color: {COLORS['accent']};
                 color: white;
-                font-weight: bold;
+                font-weight: normal;
                 border: none;
                 border-radius: 4px;
-                padding: 6px 16px;
+                padding: 5px 10px;
                 font-size: 10pt;
             }}
             QPushButton:hover {{ background-color: {COLORS['accent_hover']}; }}
@@ -126,29 +126,26 @@ class VideoPlayerDialog(QDialog):
         toolbar.setContentsMargins(10, 6, 10, 6)
         toolbar.setSpacing(8)
 
-        self._play_btn = QPushButton("⏸")
-        self._play_btn.setFixedWidth(42)
+        self._play_btn = QPushButton("⏸ Pause")
+        # Text flips Pause/Play at runtime; hold the longer width so the bar doesn't jump.
+        self._play_btn.setMinimumWidth(self._play_btn.fontMetrics().horizontalAdvance("⏸ Pause") + 28)
         self._play_btn.clicked.connect(self._toggle_play)
         toolbar.addWidget(self._play_btn)
 
-        self._stop_btn = QPushButton("■")
-        self._stop_btn.setFixedWidth(42)
+        self._stop_btn = QPushButton("■ Stop")
         self._stop_btn.clicked.connect(self._stop)
         toolbar.addWidget(self._stop_btn)
 
-        self._fullscreen_btn = QPushButton("⛶")
-        self._fullscreen_btn.setFixedWidth(42)
+        self._fullscreen_btn = QPushButton("⛶ Full screen")
         self._fullscreen_btn.clicked.connect(self._toggle_fullscreen)
         toolbar.addWidget(self._fullscreen_btn)
 
         # Playlist nav (only shown when playlist has multiple items)
-        self._prev_btn = QPushButton("⏮")
-        self._prev_btn.setFixedWidth(42)
+        self._prev_btn = QPushButton("⏮ Prev")
         self._prev_btn.clicked.connect(self._prev)
         toolbar.addWidget(self._prev_btn)
 
-        self._next_btn = QPushButton("⏭")
-        self._next_btn.setFixedWidth(42)
+        self._next_btn = QPushButton("⏭ Next")
         self._next_btn.clicked.connect(self._next)
         toolbar.addWidget(self._next_btn)
 
@@ -301,9 +298,9 @@ class VideoPlayerDialog(QDialog):
 
     def _on_state_changed(self, state):
         if state == QMediaPlayer.PlaybackState.PlayingState:
-            self._play_btn.setText("⏸")
+            self._play_btn.setText("⏸ Pause")
         else:
-            self._play_btn.setText("▶")
+            self._play_btn.setText("▶ Play")
 
     def _on_position_changed(self, ms: int):
         self._seek.setValue(ms)

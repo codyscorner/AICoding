@@ -2,7 +2,7 @@
 
 A PyQt6 desktop tool that batch-generates AI app icons for projects in this repository using a local ComfyUI instance, then converts them to `.ico` format and copies them into each project folder as `app_icon.ico`.
 
-**Current version: 1.1.1**
+**Current version: 1.1.2**
 
 ## Workflow
 
@@ -55,6 +55,11 @@ IconMaker/
 - Edit the top of `make_icons.py` to change `COMFY_URL`, `COMFY_OUTPUT`, `ICO_SIZES`, or the `APPS` list (app entries and their prompts)
 
 ## Recent Changes
+
+### v1.1.2
+- IconMaker now has its own icon (lime anvil + forged tile) and sets it for the window/taskbar, with its own `AppUserModelID`
+- `make_icons.py`: `COMFY_URL` can be overridden with the `COMFY_URL` environment variable (the local ComfyUI currently listens on 8188, the script defaults to 8000); loaders are pointed at the installed Qwen-Image 2.1 files because the workflow JSON still names the 2512 ones
+- New `APPS` entries: TodoList, S3Browser, FolderSync, IconMaker
 
 ### v1.1.1
 - `APPS` entry for the renamed ComfyUI Metadata Viewer (was VHS Metadata Parser) now points at the `ComfyUI_Metadata_Viewer` folder

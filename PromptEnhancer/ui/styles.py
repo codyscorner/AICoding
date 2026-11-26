@@ -95,6 +95,11 @@ QPushButton:disabled {{
     background-color: {COLORS['bg_light']};
     color: {COLORS['fg_dim']};
 }}
+QPushButton#small_btn {{
+    padding: 5px 10px;
+    font-size: 9pt;
+    font-weight: normal;
+}}
 QPushButton#cancel_btn {{
     background-color: {COLORS['accent_dark']};
     color: {COLORS['fg_primary']};

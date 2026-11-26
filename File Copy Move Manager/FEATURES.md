@@ -12,13 +12,14 @@ File Copy Move Manager is a companion tool to File Rename Mover. Where File Rena
 ## 1. Dual Operation Mode
 
 ### Copy Mode (default, gold theme)
-- `shutil.copy2` preserves timestamps and permissions
+- Timestamps and attributes are copied with each file
 - Source files never modified
-- Safe to re-run — incremental mode skips unchanged files
+- Safe to re-run — files already at the destination are recognised and skipped (see Preview)
 
 ### Move Mode (red theme)
-- Same copy pipeline; on success, `os.remove(source)` is called
-- If copy or verify fails, source is preserved and the error is logged
+- Same copy pipeline; the source is deleted only after a **complete** copy is in place and its size matches
+- If the copy or verify fails — or you press Cancel / the watchdog fires part-way through a file — the source is preserved and the temporary partial copy is removed
+- Files skipped because they are already at the destination are left where they are
 - "Copy Files" / "Copied:" labels update to "Move Files" / "Moved:" throughout the UI
 - Mode toggle appears at the top of both tabs and syncs between them
 
@@ -82,27 +83,37 @@ Run the same copy/move template across **multiple source folders** in sequence.
 
 ## 6. Duplicate Handling
 
+A "duplicate" here means a **different** file that wants the same destination name (identical files are never copied twice). It is common when organizing by date: many folders contain a `photo.png`.
+
 ### Number Duplicates (recommended)
 Appends `_001`, `_002`, etc. to the destination filename:
 ```
-photo.jpg already exists → photo_001.jpg
+photo.jpg already exists (different image) → photo_001.jpg
 ```
-Never overwrites; all copies are preserved.
+Never overwrites; all distinct images are preserved. Numbered copies made by earlier runs are recognised, so re-running does not add more.
 
 ### Skip Duplicates
-Leaves the existing file untouched and skips the source. Safe for incremental runs when you don't want extra numbered copies.
+Leaves the existing file untouched and skips the new one. Preview and the completion message count these as **name in use**, so you can see what was left out and turn numbering on to keep them.
+
+Both settings are honoured with Incremental on or off. With **Incremental on** and numbering **off** (and always in **Preserve structure** layouts, where a destination path belongs to exactly one source file) the file with the **newest modified date wins** the name — see *Incremental Backup Mode* below. With numbering **on**, or Incremental off, nothing is ever overwritten.
 
 ---
 
 ## 7. Preview Window
 
-Click **Preview** to scan files before any operation starts.
+Click **Preview** to see exactly what a copy would do before anything is written.
 
-- Runs on a background thread; UI stays responsive
-- Sortable table: Filename / Size / Full Source Path
-- Shows total file count and cumulative size
-- **Cancel** — abort; **Proceed** — start the operation immediately using the already-scanned list (no re-scan)
-- Respects Incremental mode — files that would be skipped are excluded from the preview
+- Runs on a background thread with progress; **Cancel** stops the scan
+- Every file is compared with what is **already at the destination**. Table columns: Filename · Source Size · Source Path · **Pre-Destination Path** · **Pre-Destination Date/Time** · **Current Destination Path** · **Current Size** · **Current Date/Time** · **Action**
+  - *Pre-Destination* = where the file will be written once the folder structure, date folders and `_001` numbering are applied, and the modified date the copy will carry
+  - *Current Destination* = the file at the destination now that it is compared with (or "—" when there is none), with its size and modified date
+  - All dates are **modified dates** (never created dates — a copy resets a file's created date to "now")
+  - *Action* (with a status dot): New · New (numbered) · **Update (newer source)** · Up to date · Same content · Same as another source · **Skipped — file is older** · Skipped — name in use
+- Opens on the files that need copying; **"Also show the N files that will not be copied"** adds the rest so you can see exactly what exists (opens that way automatically when there is nothing left to copy)
+- Virtual table — stays instant with hundreds of thousands of rows (sorting 255,000 rows takes under a second); numeric/date sorting; resizable columns; hover for full paths and byte sizes
+- Summary lines break the plan down by reason; a banner appears when files were skipped because their name is in use
+- **Cancel** — abort; **Proceed** — runs exactly the plan you saw (no re-scan, no surprises)
+- After a copy without errors the next Preview shows nothing to copy; files that failed stay listed
 
 ---
 
@@ -120,12 +131,23 @@ Adds time but guarantees byte-for-byte integrity. Recommended for archival backu
 
 ## 9. Incremental Backup Mode
 
-Optional checkbox. Before copying each file, compares:
+Optional checkbox. A file is "already there" when the destination has a file (the plain name or its `_001`, `_002` … copies) with:
 
-- File size (bytes must match)
-- Modification time (within ±2 s tolerance to handle filesystem rounding)
+- the same size, and
+- the same modified date — within ±2 s (filesystem rounding) **or exactly 1 hour apart** (daylight-saving artefact in older backups)
 
-If both match, the file is skipped (counted as Skipped). Makes repeated runs fast and safe.
+If only the date differs but the size matches, the contents are compared (MD5) so identical files are not reported as changed (files over 256 MB are not hashed). Size + date are trusted, also between two *source* files with the same name; turn Incremental off for byte-for-byte checking (same-size files are then always compared by MD5). Skipped files are counted with their reason. Makes repeated runs fast and safe.
+
+### Newest wins (same name, different file)
+When a *different* file already has the name (Incremental on, and Number duplicate files off — or a Preserve-structure layout), the **modified dates** decide:
+
+- **Source newer** than the destination copy → it changed → **Update (newer source)**: copied over the older copy
+- **Source older** (or the same date) → **Skipped — file is older**: the destination copy stays (a tie never flips between two different files)
+- Several different files with one name: the **newest gets the plain name**, the others are older
+- A file's date is the date of its **newest copy**, and that copy is the one copied
+- If a *newer copy of the version already at the destination* exists at a source, an in-between file does not replace it (the next run would only flip it back)
+
+Convergence: after a copy every name holds its newest version, so the next Preview is empty. Look at **Current Size** before copying — an update many times bigger or smaller than the file it replaces is usually a different rendition (an original versus a resized copy), not an edit.
 
 ---
 
@@ -159,13 +181,15 @@ Copied / Skipped / Errors update after every single file.
 
 ## 12. Large File Handling
 
-Files ≥ 120 MB use a **4 MB chunked copy loop** instead of `shutil.copy2`:
+Files ≥ 120 MB use an **8 MB chunked copy loop**:
 
 - Real-time per-file progress updates
-- Responds to Cancel mid-file
+- Responds to Cancel mid-file — the partial temporary file is removed and, in Move Mode, the source is kept
 - `shutil.copystat` called after to preserve metadata
 
-Files < 120 MB use `shutil.copy2` (instant, no meaningful per-file progress).
+Smaller files are copied in one step (no meaningful per-file progress).
+
+Every file — large or small — is written to a temporary `~fcmm_….partial` name next to its destination and renamed into place only when complete (and verified, if checksum verification is on). A leftover temp file from a crash is reported in the log and is safe to delete.
 
 ---
 
@@ -173,9 +197,8 @@ Files < 120 MB use `shutil.copy2` (instant, no meaningful per-file progress).
 
 Windows MAX_PATH (260 characters) is automatically managed:
 
-- Destination paths that would exceed the limit are truncated
-- A `_tr_###` suffix replaces the end of the filename
-- Logged in the status box so the user knows which files were affected
+- Destination paths that would exceed the limit are shortened
+- A `_tr_001` suffix replaces the end of the filename (decided by the planner, so Preview shows the shortened name)
 
 ---
 
@@ -199,9 +222,9 @@ All settings saved to `config.json` on close and restored on next launch:
 
 ---
 
-## 15. Sorting
+## 15. Copy Order
 
-Files are scanned, filtered, and sorted **smallest-first** before any copy starts. This ensures fast files finish early and large files are processed last where the per-file progress bar is most useful.
+Files are scanned, filtered and ordered before any copy starts. The **Copy order** dropdown chooses: Largest first (default — best load-balancing across parallel workers), Smallest first, Oldest first (modified date) or Directory order. The planner keeps that order; the copier works through the plan in it.
 
 ---
 
@@ -210,12 +233,15 @@ Files are scanned, filtered, and sorted **smallest-first** before any copy start
 | Module | Classes | Responsibility |
 |---|---|---|
 | `config.py` | `ConfigManager` | JSON load/save/defaults |
-| `file_operations.py` | `FileCopier`, `FileScanner`, `FileValidator`, `FileOperationResult` | All copy/move logic |
-| `folder_organization.py` | `FolderOrganizer`, `FolderStructure` | Destination path calculation |
+| `copy_plan.py` | `build_plan`, `Plan`, `PlanItem`, `Action` | The planner: decides where every file goes and whether it needs writing (read-only; shared by Preview, Copy and Multi-Source) |
+| `file_operations.py` | `FileCopier`, `FileScanner`, `FileValidator`, `FileOperationResult` | Scans, plans (via `copy_plan`) and executes a plan: safe temp-then-rename writes, retries, Move Mode |
+| `folder_organization.py` | `FolderOrganizer`, `FolderStructure` | Date/structure sub-folder calculation |
 | `ui/main_window.py` | `MainWindow` | Tab host, mode sync between tabs |
 | `ui/multi_source_tab.py` | `MultiSourceTab` | Multi-folder batch tab |
-| `ui/preview_dialog.py` | `PreviewDialog` | Pre-operation file list |
+| `ui/preview_dialog.py` | `PreviewDialog`, `PlanTableModel` | Plan-vs-destination table |
+| `ui/verbs.py` | `mode_verbs` | "Copy"/"Copied", "Move"/"Moved" |
 | `ui/styles.py` | `get_stylesheet(mode)`, `COLORS` | Gold + red themes |
+| `tests/` | pytest suite | Planner rules, convergence (copy → Preview shows nothing), cancel/Move safety, dialogs |
 
 ---
 

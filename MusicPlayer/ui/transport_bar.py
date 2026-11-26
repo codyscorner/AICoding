@@ -48,28 +48,25 @@ class TransportBar(QWidget):
         self._build()
 
     def _build(self) -> None:
-        self.prev_btn = QPushButton("◄◄")
-        self.play_btn = QPushButton("▶")
-        self.next_btn = QPushButton("►►")
-        for btn in (self.prev_btn, self.play_btn, self.next_btn):
-            btn.setFixedWidth(52)
-        self.play_btn.setFixedWidth(60)
+        self.prev_btn = QPushButton("◄◄ Prev")
+        self.play_btn = QPushButton("▶ Play")
+        self.next_btn = QPushButton("►► Next")
+        # Text flips Play/Pause at runtime; hold the longer width so the bar doesn't jump.
+        self.play_btn.setMinimumWidth(self.play_btn.fontMetrics().horizontalAdvance("❚❚ Pause") + 28)
 
         self.prev_btn.clicked.connect(self.prevClicked)
         self.play_btn.clicked.connect(self.playPauseClicked)
         self.next_btn.clicked.connect(self.nextClicked)
 
-        self.shuffle_btn = QPushButton("🔀")
+        self.shuffle_btn = QPushButton("🔀 Shuffle")
         self.shuffle_btn.setObjectName("modeBtn")
         self.shuffle_btn.setCheckable(True)
-        self.shuffle_btn.setFixedWidth(40)
         self.shuffle_btn.setToolTip("Shuffle")
         self.shuffle_btn.toggled.connect(self.shuffleToggled)
 
-        self.repeat_btn = QPushButton("🔁")
+        self.repeat_btn = QPushButton("🔁 Repeat")
         self.repeat_btn.setObjectName("modeBtn")
         self.repeat_btn.setCheckable(True)
-        self.repeat_btn.setFixedWidth(40)
         self.repeat_btn.setToolTip("Repeat: Off")
         self.repeat_btn.clicked.connect(self.repeatClicked)
 
@@ -141,14 +138,14 @@ class TransportBar(QWidget):
         self.elapsed_label.setText(format_time(ms))
 
     def set_playing(self, playing: bool) -> None:
-        self.play_btn.setText("❚❚" if playing else "▶")
+        self.play_btn.setText("❚❚ Pause" if playing else "▶ Play")
 
     def set_now_playing(self, text: str) -> None:
         self.now_label.setText(text or "Nothing playing")
 
     def set_repeat_mode(self, mode: str) -> None:
         """mode is 'off', 'all', or 'one'."""
-        self.repeat_btn.setText("🔂" if mode == "one" else "🔁")
+        self.repeat_btn.setText("🔂 Repeat 1" if mode == "one" else "🔁 Repeat")
         self.repeat_btn.setToolTip(f"Repeat: {mode.capitalize()}")
         self.repeat_btn.setChecked(mode != "off")
 

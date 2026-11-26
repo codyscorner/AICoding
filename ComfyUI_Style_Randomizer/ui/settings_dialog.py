@@ -13,6 +13,17 @@ from providers import PROVIDERS
 from ui.styles import COLORS
 
 
+def _browse_button(text: str = "Browse") -> QPushButton:
+    """A labelled button that always fits its text. The app's default QPushButton style pads 28 px on each
+    side, so a button forced narrower than ~60 px shows NO text at all (blank purple squares). Use the small
+    style and a minimum - never a fixed - width."""
+    btn = QPushButton(text)
+    btn.setObjectName("small_btn")
+    btn.setMinimumWidth(76)
+    btn.setFixedHeight(30)
+    return btn
+
+
 class SettingsDialog(QDialog):
     def __init__(self, config: ConfigManager, parent=None):
         super().__init__(parent)
@@ -172,10 +183,10 @@ class SettingsDialog(QDialog):
         gpu_row.addWidget(self._gpu_list, stretch=1)
         gpu_btns = QVBoxLayout()
         gpu_btns.setSpacing(2)
-        for text, slot in (("▲", lambda: self._move_gpu(-1)), ("▼", lambda: self._move_gpu(1))):
+        for text, slot in (("▲ Up", lambda: self._move_gpu(-1)), ("▼ Down", lambda: self._move_gpu(1))):
             b = QPushButton(text)
             b.setObjectName("small_btn")
-            b.setFixedWidth(40)
+            b.setMinimumWidth(84)
             b.clicked.connect(slot)
             gpu_btns.addWidget(b)
         gpu_btns.addStretch()
@@ -197,15 +208,15 @@ class SettingsDialog(QDialog):
         list_row.addWidget(self._pod_list, stretch=1)
         btn_col = QVBoxLayout()
         btn_col.setSpacing(2)
-        for text, slot in (("▲", lambda: self._move_pod(-1)), ("▼", lambda: self._move_pod(1))):
+        for text, slot in (("▲ Up", lambda: self._move_pod(-1)), ("▼ Down", lambda: self._move_pod(1))):
             b = QPushButton(text)
             b.setObjectName("small_btn")
-            b.setFixedWidth(40)
+            b.setMinimumWidth(84)
             b.clicked.connect(slot)
             btn_col.addWidget(b)
-        refresh_btn = QPushButton("↻")
+        refresh_btn = QPushButton("↻ Refresh")
         refresh_btn.setObjectName("small_btn")
-        refresh_btn.setFixedWidth(40)
+        refresh_btn.setMinimumWidth(84)
         refresh_btn.setToolTip("Fetch the pod list from RunPod")
         refresh_btn.clicked.connect(self._refresh_pods)
         btn_col.addWidget(refresh_btn)
@@ -646,9 +657,7 @@ class SettingsDialog(QDialog):
         row.addWidget(self._label(label))
         edit = QLineEdit(value or "")
         edit.setPlaceholderText(placeholder)
-        btn = QPushButton("…")
-        btn.setObjectName("small_btn")
-        btn.setFixedWidth(40)
+        btn = _browse_button()
         btn.clicked.connect(lambda: self._browse_audio(edit, alerts.WAV_FILTER))
         row.addWidget(edit, stretch=1)
         row.addWidget(btn)
@@ -679,9 +688,7 @@ class SettingsDialog(QDialog):
         lbl.setFixedWidth(120)
         edit = QLineEdit(value)
         edit.setPlaceholderText(placeholder)
-        btn = QPushButton("…")
-        btn.setFixedWidth(36)
-        btn.setFixedHeight(30)
+        btn = _browse_button()
         btn.clicked.connect(lambda: self._browse_folder(edit))
         row.addWidget(lbl)
         row.addWidget(edit, stretch=1)
@@ -696,9 +703,7 @@ class SettingsDialog(QDialog):
         lbl.setFixedWidth(120)
         edit = QLineEdit(value)
         edit.setPlaceholderText(placeholder)
-        btn = QPushButton("…")
-        btn.setFixedWidth(36)
-        btn.setFixedHeight(30)
+        btn = _browse_button()
         btn.clicked.connect(lambda: self._browse_file(edit, file_filter))
         row.addWidget(lbl)
         row.addWidget(edit, stretch=1)
@@ -714,13 +719,9 @@ class SettingsDialog(QDialog):
         lbl.setFixedWidth(120)
         edit = QLineEdit(value)
         edit.setPlaceholderText(placeholder)
-        browse_btn = QPushButton("…")
-        browse_btn.setFixedWidth(36)
-        browse_btn.setFixedHeight(30)
+        browse_btn = _browse_button()
         browse_btn.clicked.connect(lambda: self._browse_file(edit, file_filter))
-        extra_btn = QPushButton(extra_label)
-        extra_btn.setFixedWidth(52)
-        extra_btn.setFixedHeight(30)
+        extra_btn = _browse_button(extra_label)
         row.addWidget(lbl)
         row.addWidget(edit, stretch=1)
         row.addWidget(browse_btn)

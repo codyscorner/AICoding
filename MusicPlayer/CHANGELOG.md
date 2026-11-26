@@ -2,6 +2,9 @@
 
 All notable changes to Music Player are recorded here.
 
+## Unreleased
+- **Icon-only buttons now have a short text label.** Buttons that showed only a symbol (↻, …, 🎲, 🗑 and so on) now read e.g. "↻ Refresh" or "Browse" in regular-weight, regular-size text; their fixed widths were dropped so they size to their label. Covers: ◄◄ Prev, ▶ Play / ❚❚ Pause, ►► Next, 🔀 Shuffle, 🔁 Repeat / 🔂 Repeat 1, and the playlist ＋ New, ✎ Rename, 🗑 Delete. Sidebar starts a little wider (250 px) to fit them.
+
 ## [1.0.0] - 2026-07-03
 ### Added — Phase 6: shortcuts, Explorer drag-in, first EXE
 - **Keyboard shortcuts** (when the list has focus): Space = play/pause,

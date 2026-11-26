@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 
 BG_DARK      = "#0d0d1a"
 BG_MID       = "#12122a"
@@ -472,8 +472,22 @@ class IconMakerApp(QMainWindow):
 
 
 def main():
+    from pathlib import Path
+
+    # Own taskbar identity so Windows doesn't group us under python.exe.
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("IconMaker.App.1")
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    icon_path = base / "app_icon.ico"
+    icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
+    app.setWindowIcon(icon)
     window = IconMakerApp()
+    window.setWindowIcon(icon)
     window.show()
     sys.exit(app.exec())
 

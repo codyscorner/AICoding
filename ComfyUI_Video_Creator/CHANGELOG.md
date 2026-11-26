@@ -1,5 +1,8 @@
 # Changelog — ComfyUI Video Creator
 
+### Unreleased
+- **Icon-only buttons now have a short text label.** Buttons that showed only a symbol (↻, …, 🎲, 🗑 and so on) now read e.g. "↻ Refresh" or "Browse" in regular-weight, regular-size text; their fixed widths were dropped so they size to their label. Covers: ↻ Refresh, 🎲 Random, Browse, 📂 Open, 🗑 Delete, and the video player's ⏸ Pause / ▶ Play, ■ Stop, ⛶ Full screen, ⏮ Prev, ⏭ Next.
+
 ### v2.22.0
 - **Removed the Video → Extend tab.** The app now makes single videos only (Image → Video and Text → Video, plus the Library); extending is the ComfyUI Chain Automator's job. Gone with the tab: the video picker and **Videos** folder setting, the *Video input* mode and *Append the new clip* options, ffmpeg stitching, source-size and codec matching, `_EXT` / `_extended` output names, **Send to Library** / **Hide** / **Unhide** / **Hide short clips** (`extend_marks.py`), and the Library's **Send to Extend** button
 - Existing history and favorites keep working: entries saved by earlier versions still match the same run made now, so no duplicate rows and no lost stars. Videos you made by extending stay in the Library with their prompt and settings; **Reuse Settings** on one of them explains that extending was removed

@@ -151,6 +151,8 @@ class DarkBlueTheme(Theme):
             QPushButton[cssClass="browse"] {{
                 padding: 6px 12px;
                 min-width: 30px;
+                font-weight: normal;
+                font-size: 10pt;
             }}
 
             QPushButton[cssClass="danger"] {{

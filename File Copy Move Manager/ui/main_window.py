@@ -20,11 +20,32 @@ from PyQt6.QtGui import QIcon
 
 from config import ConfigManager
 from profiles import ProfileManager
-from file_operations import FileCopier, FileScanner, FileValidator, format_file_size
+from copy_plan import Action, PlanCancelled
+from file_operations import FileCopier, format_file_size, summarize_results
 from folder_organization import FolderStructure, FolderOrganizer
 from ui.styles import STYLESHEET, COLORS, get_stylesheet
 from ui.preview_dialog import PreviewDialog
 from ui.multi_source_tab import MultiSourceTab, SORT_ORDER_LABELS, SORT_ORDER_VALUES
+from ui.verbs import mode_verbs
+
+# Copier messages shown in the on-screen status list. Everything the copier says goes to
+# the .log file; the per-file skip reasons are deliberately kept out of this list.
+_SHOW_PREFIXES = (
+    "Error", "Copied (large):", "Moved (large):", "Path too long", "Found ", "Scanning",
+    "Reading", "Gathering", "Checking", "Starting", "Sorting",
+    "Duplicate found:", "Operation cancelled", "Start:",
+    "Retry ", "CHECKSUM", "Warning: source not deleted",
+    "Comparing", "Plan:", "Using the previewed plan", "Nothing to", "Note:",
+)
+
+# What the plan skipped, in words (shown in the completion summary).
+_SKIP_LABELS = {
+    Action.UP_TO_DATE: "already up to date",
+    Action.SAME_CONTENT: "same content, date differs",
+    Action.DUPLICATE_SOURCE: "same image as another source",
+    Action.OLDER: "file is older than the copy at the destination",
+    Action.NAME_TAKEN: "name in use by a different file (nothing may be overwritten)",
+}
 
 
 class MainWindow(QMainWindow):
@@ -390,10 +411,10 @@ class MainWindow(QMainWindow):
     def _on_mode_changed(self, mode: str):
         self._mode = mode
         self.setStyleSheet(get_stylesheet(mode))
-        verb = "Move" if mode == 'move' else "Copy"
+        verb, past = mode_verbs(mode)
         self.copy_btn.setText(f"{verb} Files")
         self.setWindowTitle(f"File Copy Move Manager  |  {verb} Mode  (V-{self.version})")
-        self.copied_title_label.setText(f"{verb}d:")
+        self.copied_title_label.setText(f"{past}:")
         self.options_section_label.setText(f"{verb} Options")
         # Highlight the active mode button with a white border; inactive gets none
         active_style = "border: 2px solid white; padding: 4px 13px;"
@@ -551,65 +572,72 @@ class MainWindow(QMainWindow):
         threading.Thread(target=self._preview_worker, args=(options,), daemon=True).start()
         self._poll_timer.start()
 
+    def _make_copier(self, options: dict) -> FileCopier:
+        """Build the FileCopier for a run. Preview uses it too — only to plan, never to copy."""
+        def _status_cb(msg):
+            # Every event the copier emits (skips, duplicates, large copies,
+            # retries, errors) goes to the .log file — including the per-file
+            # skip reasons that are intentionally kept out of the UI list.
+            self._logger.info(msg)
+            if any(msg.startswith(p) for p in _SHOW_PREFIXES):
+                self._queue_msg('status', msg)
+
+        def _fatal_cb(msg):
+            self._cancel_requested = True
+            self._queue_msg('fatal_error', msg)
+
+        return FileCopier(
+            status_callback=_status_cb,
+            folder_structure=FolderStructure(options['folder_structure']),
+            number_duplicates=options['number_duplicates'],
+            progress_callback=lambda cur, tot, fname, fprog: self._queue_msg(
+                'progress', {'current': cur, 'total': tot, 'filename': fname, 'file_progress': fprog}
+            ),
+            cancel_check=lambda: self._cancel_requested,
+            counters_callback=lambda c, s, e: self._queue_msg(
+                'counters', {'copied': c, 'skipped': s, 'errors': e}
+            ),
+            verify_checksum=options.get('verify_checksum', False),
+            incremental=options.get('incremental', False),
+            move_mode=options.get('operation_mode') == 'move',
+            workers=options.get('workers', 1),
+            sort_order=options.get('sort_order', 'largest'),
+            fatal_error_callback=_fatal_cb,
+            plan_progress_callback=lambda stage, done, total: self._queue_msg(
+                'plan_progress', {'stage': stage, 'done': done, 'total': total}
+            ),
+        )
+
     def _preview_worker(self, options: dict):
         try:
-            patterns = FileValidator.validate_file_mask(options['extension'])
-            files = FileScanner.get_files_with_patterns(
-                options['source_folder'], patterns, options['recursive_search'],
+            self._log_run_settings(options, title="PREVIEW SETTINGS")
+            copier = self._make_copier(options)
+            plan = copier.build_plan(
+                options['source_folder'], options['dest_folder'], options['extension'],
+                options['preserve_structure'], options['recursive_search'],
                 min_size_bytes=options.get('min_size_bytes'),
                 max_size_bytes=options.get('max_size_bytes'),
                 max_days_old=options.get('max_days_old'),
-                sort_order=options.get('sort_order', 'largest'),
             )
-            if options.get('incremental') and files:
-                files = self._filter_incremental(files, options)
-            self._queue_msg('preview_ready', {'files': files, 'options': options})
-        except Exception as e:
+            self._queue_msg('preview_ready', {'plan': plan, 'options': options})
+        except PlanCancelled:
+            self._queue_msg('preview_cancelled', None)
+        except ValueError as e:
             self._queue_msg('error', {'type': 'validation', 'message': str(e)})
+        except OSError as e:
+            self._logger.error(f"FILE SYSTEM ERROR: {e}")
+            self._queue_msg('error', {'type': 'filesystem', 'message': str(e)})
+        except Exception as e:
+            self._logger.error(f"UNEXPECTED ERROR: {e}")
+            self._queue_msg('error', {'type': 'unexpected', 'message': str(e)})
 
-    def _filter_incremental(self, files: list, options: dict) -> list:
-        """Return only files that would actually be copied (not skipped by incremental check)."""
-        dest_folder = options['dest_folder']
-        source_folder = options['source_folder']
-        preserve = options['preserve_structure']
-        organizer = FolderOrganizer()
-        try:
-            folder_structure = FolderStructure(options['folder_structure'])
-        except ValueError:
-            folder_structure = FolderStructure.FLAT
-
-        result = []
-        for full_path, rel_path, size in files:
-            filename = os.path.basename(full_path)
-            if preserve:
-                rel_dir = os.path.dirname(rel_path)
-                final_dest_folder = os.path.join(dest_folder, rel_dir) if rel_dir else dest_folder
-            else:
-                subfolder = organizer.get_destination_subfolder(
-                    full_path, folder_structure, source_folder, use_file_date=True
-                )
-                final_dest_folder = os.path.join(dest_folder, subfolder) if subfolder else dest_folder
-
-            dest_path = os.path.join(final_dest_folder, filename)
-            if os.path.exists(dest_path):
-                try:
-                    src_stat = os.stat(full_path)
-                    dst_stat = os.stat(dest_path)
-                    if (src_stat.st_size == dst_stat.st_size and
-                            abs(src_stat.st_mtime - dst_stat.st_mtime) <= 2.0):
-                        continue  # would be skipped — exclude from preview
-                except OSError:
-                    pass
-            result.append((full_path, rel_path, size))
-        return result
-
-    def _log_run_settings(self, options: dict):
+    def _log_run_settings(self, options: dict, title: str = "RUN SETTINGS"):
         """Write the full set of settings used for this run to the top of the log file."""
         def _sz(b):
             return "—" if b is None else f"{int(b):,} bytes"
         days = options.get('max_days_old')
         lines = [
-            "================ RUN SETTINGS — Single Source ================",
+            f"================ {title} — Single Source ================",
             f"  Operation mode:     {str(options.get('operation_mode', 'copy')).upper()}",
             f"  Source:             {options['source_folder']}",
             f"  Destination:        {options['dest_folder']}",
@@ -636,69 +664,35 @@ class MainWindow(QMainWindow):
             start_str = _dt.datetime.fromtimestamp(start_time).strftime("%H:%M:%S.") + f"{int(start_time % 1 * 100):02d}"
             self._queue_msg('status', f"Start: {start_str}")
             self._log_run_settings(options)
-            folder_structure = FolderStructure(options['folder_structure'])
-            _SHOW_PREFIXES = (
-                "Error", "Copied (large):", "Moved (large):", "Path too long", "Found ", "Scanning",
-                "Reading", "Gathering", "Checking", "Starting", "Sorting",
-                "Duplicate found:", "Operation cancelled", "Start:",
-                "Retry ", "CHECKSUM", "Warning: source not deleted",
-            )
-
-            def _status_cb(msg):
-                # Every event the copier emits (skips, duplicates, large copies,
-                # retries, errors) goes to the .log file — including the per-file
-                # skip reasons that are intentionally kept out of the UI list.
-                self._logger.info(msg)
-                if any(msg.startswith(p) for p in _SHOW_PREFIXES):
-                    self._queue_msg('status', msg)
-
-            def _fatal_cb(msg):
-                self._cancel_requested = True
-                self._queue_msg('fatal_error', msg)
-
-            copier = FileCopier(
-                status_callback=_status_cb,
-                folder_structure=folder_structure,
-                number_duplicates=options['number_duplicates'],
-                progress_callback=lambda cur, tot, fname, fprog: self._queue_msg(
-                    'progress', {'current': cur, 'total': tot, 'filename': fname, 'file_progress': fprog}
-                ),
-                cancel_check=lambda: self._cancel_requested,
-                counters_callback=lambda c, s, e: self._queue_msg(
-                    'counters', {'copied': c, 'skipped': s, 'errors': e}
-                ),
-                verify_checksum=options.get('verify_checksum', False),
-                incremental=options.get('incremental', False),
-                move_mode=options.get('operation_mode') == 'move',
-                workers=options.get('workers', 1),
-                sort_order=options.get('sort_order', 'largest'),
-                fatal_error_callback=_fatal_cb,
-            )
+            copier = self._make_copier(options)
             results = copier.copy_files(
                 options['source_folder'], options['dest_folder'], options['extension'],
                 options['preserve_structure'], options['recursive_search'],
                 min_size_bytes=options['min_size_bytes'],
                 max_size_bytes=options['max_size_bytes'],
                 max_days_old=options['max_days_old'],
-                pre_scanned_files=options.get('pre_scanned_files'),
+                plan=options.get('plan'),
             )
 
             if self._cancel_requested:
                 self._queue_msg('cancelled', None)
                 return
 
-            copied = sum(1 for r in results if r.success and r.destination_file is not None)
-            skipped = sum(1 for r in results if r.success and r.destination_file is None)
-            errors = sum(1 for r in results if not r.success)
-            total_bytes = sum(r.file_size for r in results if r.success and r.destination_file is not None)
+            summary = summarize_results(results, copier.planned_skips)
+            plan_counts = dict(copier.last_plan.counts) if copier.last_plan else {}
             end_time = time.time()
-            self._queue_msg('counters', {'copied': copied, 'skipped': skipped, 'errors': errors})
+            self._queue_msg('counters', {
+                'copied': summary.copied, 'skipped': summary.skipped, 'errors': summary.errors,
+            })
             self._queue_msg('complete', {
-                'copied_count': copied, 'skipped_count': skipped, 'error_count': errors,
-                'total_bytes': total_bytes,
+                'copied_count': summary.copied, 'skipped_count': summary.skipped,
+                'error_count': summary.errors, 'total_bytes': summary.bytes_copied,
+                'plan_counts': plan_counts,
                 'options': options, 'start_time': start_time, 'end_time': end_time,
             })
 
+        except PlanCancelled:
+            self._queue_msg('cancelled', None)
         except ValueError as e:
             self._queue_msg('error', {'type': 'validation', 'message': str(e)})
         except OSError as e:
@@ -731,9 +725,17 @@ class MainWindow(QMainWindow):
                         self.copied_label.setText(str(data['copied']))
                         self.skipped_label.setText(str(data['skipped']))
                         self.errors_label.setText(str(data['errors']))
+                    elif msg_type == 'plan_progress':
+                        self.progress_label.setText(
+                            f"{data['stage']}…  {data['done']:,} of {data['total']:,}"
+                        )
                     elif msg_type == 'preview_ready':
                         self._poll_timer.stop()
                         self._on_preview_ready(data)
+                        return
+                    elif msg_type == 'preview_cancelled':
+                        self._poll_timer.stop()
+                        self._on_preview_cancelled()
                         return
                     elif msg_type == 'complete':
                         self._poll_timer.stop()
@@ -765,17 +767,27 @@ class MainWindow(QMainWindow):
         self.preview_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
 
-        files = data['files']
+        self.progress_label.setText("Ready")
+        plan = data['plan']
         options = data['options']
 
-        if not files:
+        if not plan.items:
             QMessageBox.information(self, "Preview", "No files found matching the current filters.")
             return
 
-        dialog = PreviewDialog(files, options, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            options['pre_scanned_files'] = files  # skip re-scan — list already filtered
+        # Shown even when there is nothing to do, so "everything is already there" is visible.
+        dialog = PreviewDialog(plan, options, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and plan.copy_count:
+            options['plan'] = plan  # Copy runs exactly this plan — what was previewed is what is copied
             self._execute_copy(options)
+
+    def _on_preview_cancelled(self):
+        self._is_copying = False
+        self.copy_btn.setEnabled(True)
+        self.preview_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
+        self.progress_label.setText("Preview cancelled")
+        self._add_status("Preview cancelled")
 
     @staticmethod
     def _format_elapsed(seconds: float) -> str:
@@ -817,27 +829,46 @@ class MainWindow(QMainWindow):
         self.config.set("sort_order_label", self.sort_combo.currentText())
         self.config.save()
 
-        verb = "Moved" if opts.get('operation_mode') == 'move' else "Copied"
+        verb, past = mode_verbs(opts.get('operation_mode', 'copy'))
         self.copied_label.setText(str(copied))
         self.skipped_label.setText(str(skipped))
-        self.progress_label.setText(f"Complete! {verb}: {copied} ({size_str})  Skipped: {skipped}")
+        self.progress_label.setText(f"Complete! {past}: {copied} ({size_str})  Skipped: {skipped}")
 
         import datetime as _dt
         start_str = _dt.datetime.fromtimestamp(start_t).strftime("%H:%M:%S.") + f"{int(start_t % 1 * 100):02d}"
         end_str   = _dt.datetime.fromtimestamp(end_t).strftime("%H:%M:%S.") + f"{int(end_t % 1 * 100):02d}"
         elapsed_str = self._format_elapsed(elapsed)
         self._add_status(f"End: {end_str}  |  Elapsed: {elapsed_str}")
-        self._add_status(f"Total {verb.lower()}: {copied} files  |  {size_str}")
+        self._add_status(f"Total {past.lower()}: {copied} files  |  {size_str}")
+
+        # Why files were skipped — the plan knows, so say it instead of one bare number.
+        plan_counts = data.get('plan_counts', {})
+        why = [f"{_SKIP_LABELS[a]}: {plan_counts[a]:,}" for a in _SKIP_LABELS if plan_counts.get(a)]
+        for line in why:
+            self._add_status(f"Skipped — {line}")
         self._add_status(f"Log file (per-file skip reasons): {self._log_path}")
 
-        summary = f"Total {verb}: {copied} ({size_str})\nTotal Skipped: {skipped}\nElapsed: {elapsed_str}"
-        action = "process" if opts.get('operation_mode') == 'move' else "copy"
+        why_text = "\n".join(f"  {line}" for line in why)
+        summary = f"Total {past}: {copied} ({size_str})\nTotal Skipped: {skipped}\nElapsed: {elapsed_str}"
+        if why:
+            summary += "\n\nSkipped because:\n" + why_text
         if errors == 0 and copied > 0:
             QMessageBox.information(self, "Complete", summary)
         elif copied > 0:
-            QMessageBox.warning(self, "Completed with errors", f"{summary}\nErrors: {errors}\n\nCheck status for details.")
+            QMessageBox.warning(self, "Completed with errors", f"{summary}\n\nErrors: {errors}\n\nCheck status for details.")
+        elif errors == 0 and skipped > 0:
+            taken = plan_counts.get(Action.NAME_TAKEN, 0)
+            if taken:
+                # Not "everything is already there": those images are NOT at the destination.
+                text = (f"Nothing was {past.lower()}: {skipped:,} matching files were skipped, {taken:,} of them "
+                        f"because a different file already uses the same name.\n\n{why_text}\n\n"
+                        f"Turn on \"Number duplicate files\" to keep those as name_001, name_002 …")
+            else:
+                text = (f"Nothing to {verb.lower()} — all {skipped:,} matching files are already "
+                        f"at the destination.\n\n{why_text}")
+            QMessageBox.information(self, "Nothing to " + verb.lower(), text)
         elif errors == 0:
-            QMessageBox.information(self, "No Files", f"No files were found to {action}")
+            QMessageBox.information(self, "No Files", f"No files were found to {verb.lower()}")
 
     def _on_copy_cancelled(self):
         self._is_copying = False

@@ -22,6 +22,24 @@ class ConfigManager:
         "workflow_path": "",
         "prompts_file": "",
         "skip_existing": True,
+        # Main character: one fixed photo sent as the workflow's second image on
+        # every run, while the folder images rotate through the first.
+        "main_character_enabled": False,
+        "main_character_path": "",
+        # "reference" = 2nd Load Image; "stitch_left"/"stitch_right" = joined to the
+        # folder image as ONE image (for one-image workflows such as Flux2 Dev)
+        "main_character_mode": "stitch_left",
+        # Aspect ratio of the generated image: "auto" (follow the input image) or a
+        # key of worker.OUTPUT_SHAPES such as "portrait_2_3" / "landscape_3_2"
+        "output_shape": "auto",
+        # Remembered between sessions (the AI scene generator and the main window)
+        "scene_gen_scenario": "",
+        "scene_gen_idea": "",
+        "scene_gen_count": 6,
+        "prompt_editor_size": None,
+        "prompt_order": "evens_odds",
+        "auto_batch_size": 4,
+        "window_geometry": "",
         # RunPod pod control (copied from ComfyUI Video Creator). The API key is
         # NOT here — it lives in api_keys.json next to the EXE (see runpod_api.py).
         "runpod_gpu_order": [],                # GPU models, best first; outranks runpod_pod_order

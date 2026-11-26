@@ -28,6 +28,7 @@ PyQt6 file-explorer-style browser for RunPod's S3-compatible network-volume stor
 | `s3_browser/workers.py` | Background transfer threads |
 | `s3_browser/settings_dialog.py` | Endpoint/credentials setup |
 | `s3_browser/config.py` | Config + AWS credentials-file handling |
+| `app_icon.ico` | App icon (taskbar, window, EXE) — regenerate with `IconMaker/make_icons.py` |
 
 ## Building the EXE
 
@@ -35,7 +36,9 @@ PyQt6 file-explorer-style browser for RunPod's S3-compatible network-volume stor
 pyinstaller S3Browser.spec
 ```
 
-Deployed EXE: `P:\Apps\AICoded\S3 Browser\`
+`S3Browser.spec` is gitignored (`*.spec`), so it exists only on the build machine. If it has to be recreated, it needs `datas=[('app_icon.ico', '.')]` and `icon=['app_icon.ico']` in `EXE(...)` — the first bundles the icon for the window/taskbar, the second embeds it in the EXE for Explorer and shortcuts.
+
+Deployed EXE: `P:\Apps\VibeCoded\S3 Browser\`
 
 ## Changelog
 

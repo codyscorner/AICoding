@@ -190,6 +190,7 @@ QLabel#status_dim {{
 QPushButton#small_btn {{
     padding: 5px 10px;
     font-size: 10pt;
+    font-weight: normal;
 }}
 QPushButton#secondary_btn {{
     background-color: {COLORS['bg_light']};

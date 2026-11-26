@@ -1,5 +1,19 @@
 # Changelog — ComfyUI Workflow Chain Automator
 
+### Unreleased
+- **Icon-only buttons now have a short text label.** Buttons that showed only a symbol (↻, …, 🎲, 🗑 and so on) now read e.g. "↻ Refresh" or "Browse" in regular-weight, regular-size text; their fixed widths were dropped so they size to their label. Covers: ↻ Refresh, 🎲 Random, ⚙ Settings, Browse, and the video player's ⏸ Pause / ▶ Play, ■ Stop, ⛶ Full screen, ⏮ Prev, ⏭ Next.
+
+### v3.12.2
+- Fix: two starting images with the same name but different extensions (`x_000001.jpg` and `x_000001.png`) produced the same final video name and the same zip name, so the second video silently overwrote the first — a 2-image batch ended with one video in the library. Final names are now unique within a batch: the first keeps `<stem>_<stamp>.mp4`, a later duplicate becomes `<stem>_<ext>_<stamp>.mp4` (then `_2`, `_3`, ...), and the zip follows the video name
+
+### v3.12.1
+- Fix: on local ComfyUI a batch could fail with "expected 1 output videos, ComfyUI returned 2" even though only one image was staged. Local mode re-uses one staging folder per segment (`Batch_Processing/seg_N`) every run, and the Inspire `LoadImageListFromDir` node's `IS_CHANGED` only hashes its input values (folder path, cap, sort method) when `load_always` is off — not the folder's contents — so ComfyUI served the image list cached from the previous run (e.g. a cancelled 2-image batch) and rendered a video per stale image. The batch run now forces `load_always` on for the loader so the folder is re-read every time. RunPod mode was unaffected (its folder name contains a unique run id)
+- The "expected N videos" error now says what is actually wrong when ComfyUI returns MORE videos than images (stale loader / extra batch node) instead of blaming a failed image
+
+### v3.12.0
+- **Delete segment videos from the pod volume once they are downloaded** (new `remote_cleanup.py`, same module as ComfyUI Video Creator v2.15.0). ComfyUI never removes its finished videos from `<ComfyUI>/output` on the network volume, and the volume is billed per GB, so every batch left its segment clips behind. New checkbox in **Settings → RunPod Volume (S3)**: *Delete each segment video from the pod volume after it is downloaded* (**off by default**) plus *Output Prefix* (default `runpod-slim/ComfyUI/output/`)
+- Safety rules: deleted only if the object is on the volume, the local copy is not empty, and **the local size equals the volume's size**; otherwise the pod copy is kept and the log says why. Only real `output` files, `..` paths refused, and the empty `Merge/<run>` folder is removed after its last file (pruned bottom-up, only when a listing shows it empty). RunPod mode only; failures are logged (`Deleted … from the pod volume` / `Pod cleanup: kept …`) and never fail the batch. Both download paths (history outputs and the "already exists" fallback) are covered
+
 ### v3.11.4
 - Fix: in a multi-image batch the segments could swap between videos (video A's segment 2 attached to video B and vice versa). Outputs are paired back to images by position, but the Inspire `LoadImageListFromDir` node in the batch workflows was set to `sort_method: None`, which returns raw directory-listing order — arbitrary on the pod's Linux filesystem — so on a segment the pod listed `002_...` before `001_...` and every output after it was matched to the wrong image. The batch run now forces the loader to `Alphabetical (ASC)` (staged files are zero-padded `001_`, `002_`, ...), whatever the workflow JSON says. Not specific to MiniMax; WAN chains could hit it too
 

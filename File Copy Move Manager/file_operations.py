@@ -4,14 +4,16 @@ import os
 import shutil
 import time
 import fnmatch
-import hashlib
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 from typing import List, Optional, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from folder_organization import FolderOrganizer, FolderStructure
+from folder_organization import FolderStructure
+from copy_plan import (
+    Action, Plan, PlanItem, TEMP_PREFIX, TEMP_SUFFIX, WRITE_ACTIONS, build_plan, compute_md5,
+)
 
 
 def format_file_size(size_bytes: float) -> str:
@@ -34,6 +36,32 @@ class FileOperationResult:
     file_size: int = 0
     copy_time: float = 0.0
     checksum_verified: Optional[bool] = None
+    cancelled: bool = False       # stopped by Cancel before/while this file was copied
+
+
+@dataclass
+class RunSummary:
+    """Totals for a finished (or cancelled) run."""
+    copied: int
+    skipped: int       # includes the files the plan skipped before anything was copied
+    errors: int
+    bytes_copied: int
+
+
+def summarize_results(results: List[FileOperationResult], planned_skips: int = 0) -> RunSummary:
+    """Count copied / skipped / errors. Files stopped by Cancel are not counted as skipped."""
+    copied = skipped = errors = total_bytes = 0
+    for r in results:
+        if r.cancelled:
+            continue
+        if not r.success:
+            errors += 1
+        elif r.destination_file is not None:
+            copied += 1
+            total_bytes += r.file_size
+        else:
+            skipped += 1
+    return RunSummary(copied, skipped + planned_skips, errors, total_bytes)
 
 
 class FileValidator:
@@ -93,6 +121,11 @@ class FileValidator:
 class FileScanner:
     """Scans directories for files matching criteria"""
 
+    # Windows system folders that are never scanned: the Recycle Bin (deleted files; RECYCLER is its
+    # pre-Vista name) and System Volume Information (restore points, unreadable anyway). Matched by name,
+    # ignoring case, at any depth.
+    SKIPPED_FOLDERS = frozenset({"$recycle.bin", "recycler", "system volume information"})
+
     @staticmethod
     def _matches_any_pattern(filename: str, patterns: List[str]) -> bool:
         """
@@ -120,7 +153,8 @@ class FileScanner:
         max_size_bytes: Optional[float] = None,
         max_days_old: Optional[int] = None,
         sort_order: str = "largest",
-    ) -> List[tuple[str, str, int]]:
+        include_mtime: bool = False,
+    ) -> List[tuple]:
         """
         Scan folder for matching files, apply filters, and return them ordered
         per `sort_order`: "largest" (default, best for parallel load-balancing),
@@ -128,7 +162,8 @@ class FileScanner:
         date first), or "directory" (scan order, preserves read locality on
         mechanical drives).
 
-        Returns list of (full_path, relative_path, size_bytes) tuples.
+        Returns a list of (full_path, relative_path, size_bytes) tuples, or
+        (full_path, relative_path, size_bytes, mtime) when include_mtime is True.
         """
         from datetime import datetime, timedelta
 
@@ -152,11 +187,12 @@ class FileScanner:
                 return False, 0, 0.0
             return True, size, st.st_mtime
 
-        # Internal rows carry modified time for the "oldest" sort; it is
-        # stripped before returning so the public tuple shape stays 3-wide.
+        # Internal rows carry modified time for the "oldest" sort and the planner;
+        # it is stripped before returning unless the caller asked for it.
         rows = []  # (full_path, rel_path, size, mtime)
         if recursive:
             for root, dirs, filenames in os.walk(folder_path):
+                dirs[:] = [d for d in dirs if d.lower() not in FileScanner.SKIPPED_FOLDERS]
                 for filename in filenames:
                     full_path = os.path.join(root, filename)
                     ok, size, mtime = _accept(full_path, filename)
@@ -178,11 +214,26 @@ class FileScanner:
         elif sort_order == "oldest":
             rows.sort(key=lambda x: x[3])  # oldest modified date first
         # "directory" (or anything else): leave in natural scan order
+        if include_mtime:
+            return rows
         return [(fp, rel, size) for fp, rel, size, _mtime in rows]
 
 
 class FileCopier:
-    """Handles file copying operations"""
+    """Plans and executes copy / move operations.
+
+    build_plan() decides what happens to every file (see copy_plan.py);
+    copy_files() executes that plan. Preview shows the same plan, so what you
+    preview is exactly what is copied.
+    """
+
+    LARGE_FILE_THRESHOLD = 120 * 1024 * 1024   # chunked I/O above this: cancellable, live progress
+    MIN_FILE_PROGRESS_SIZE = 50 * 1024 * 1024  # no per-file progress bar below this
+    CHUNK_SIZE = 8 * 1024 * 1024
+    MAX_RETRIES = 3
+    RETRY_DELAY = 1.5
+    # Windows error codes that mean "stop everything": disk full / drive gone / disk corrupt
+    _FATAL_WINERRORS = {112, 39, 21, 1117, 1392}
 
     def __init__(
         self,
@@ -199,6 +250,7 @@ class FileCopier:
         transfer_callback: Optional[Callable[[str, str, int], None]] = None,
         fatal_error_callback: Optional[Callable[[str], None]] = None,
         sort_order: str = "largest",
+        plan_progress_callback: Optional[Callable[[str, int, int], None]] = None,
     ):
         self.status_callback = status_callback
         self.progress_callback = progress_callback
@@ -206,58 +258,126 @@ class FileCopier:
         self.counters_callback = counters_callback
         self.transfer_callback = transfer_callback
         self.fatal_error_callback = fatal_error_callback
+        self.plan_progress_callback = plan_progress_callback
         self.validator = FileValidator()
         self.scanner = FileScanner()
         self.folder_structure = folder_structure
         self.number_duplicates = number_duplicates
-        self.organizer = FolderOrganizer()
         self.verify_checksum = verify_checksum
         self.incremental = incremental
         self.move_mode = move_mode
         self.workers = max(1, workers)
         self.sort_order = sort_order
-        self._filename_lock = threading.Lock()
         self.last_activity_time: float = time.time()
+        self.last_plan: Optional[Plan] = None
+        self.planned_skips: int = 0     # files the plan skipped; results only cover files that were attempted
+
+    # ── helpers ──────────────────────────────────────────────────────────────
 
     def _log_status(self, message: str) -> None:
         """Log status message if callback is set"""
         if self.status_callback:
             self.status_callback(message)
 
-    def _compute_checksum(self, path: str) -> str:
-        """Compute MD5 checksum of a file in 4 MB chunks."""
-        h = hashlib.md5()
-        with open(path, 'rb') as f:
-            while True:
-                chunk = f.read(4 * 1024 * 1024)
-                if not chunk:
-                    break
-                h.update(chunk)
-        return h.hexdigest()
-
-    def _truncate_path(self, folder: str, filename: str, max_len: int = 245) -> str:
-        """
-        If the full path exceeds max_len, truncate the filename stem and append _tr001.
-        Returns the (possibly truncated) filename only.
-        """
-        full_path = os.path.join(folder, filename)
-        if len(full_path) <= max_len:
-            return filename
-        base_name, ext = os.path.splitext(filename)
-        counter = 1
-        while True:
-            suffix = f"_tr_{counter:03d}"
-            allowed = max_len - len(folder) - len(os.sep) - len(suffix) - len(ext)
-            truncated = f"{base_name[:allowed]}{suffix}{ext}"
-            if not os.path.exists(os.path.join(folder, truncated)):
-                break
-            counter += 1
-        self._log_status(f"Path too long, truncated: {filename} → {truncated}")
-        return truncated
+    def _is_cancelled(self) -> bool:
+        return bool(self.cancel_check and self.cancel_check())
 
     def _format_file_size(self, size_bytes: int) -> str:
         """Format file size in human-readable format (e.g. "1.23 MB")."""
         return format_file_size(size_bytes)
+
+    @staticmethod
+    def _discard(path: str) -> None:
+        """Remove a temp file if it exists."""
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _skip_message(item: PlanItem) -> str:
+        """The per-file skip reason written to the log (one line per skipped file)."""
+        if item.action is Action.UP_TO_DATE:
+            return f"Skipped (unchanged): {item.source_path}"
+        if item.action is Action.SAME_CONTENT:
+            return f"Skipped (identical): {item.source_path}"
+        if item.action is Action.DUPLICATE_SOURCE:
+            return f"Skipped (same image as another source): {item.source_path}"
+        if item.action is Action.OLDER:
+            return f"Skipped (older): {item.source_path}"
+        return f"Skipped (duplicate): {item.source_path}"        # NAME_TAKEN
+
+    # ── planning ─────────────────────────────────────────────────────────────
+
+    def build_plan(
+        self,
+        source_folder: str,
+        dest_folder: str,
+        file_mask: str,
+        preserve_structure: bool = False,
+        recursive: bool = True,
+        min_size_bytes: Optional[float] = None,
+        max_size_bytes: Optional[float] = None,
+        max_days_old: Optional[int] = None,
+    ) -> Plan:
+        """
+        Scan the source and work out what to do with every file, without
+        writing anything. Raises copy_plan.PlanCancelled if cancelled.
+        """
+        self.validator.validate_folder_exists(source_folder)
+        patterns = self.validator.validate_file_mask(file_mask)
+
+        search_mode = "recursively through all subfolders" if recursive else "in root folder only"
+        patterns_str = ", ".join(patterns)
+        self._log_status(f"Reading directories {search_mode}...")
+        self._log_status(f"Gathering file list — matching: {patterns_str}")
+        files = self.scanner.get_files_with_patterns(
+            source_folder, patterns, recursive,
+            min_size_bytes=min_size_bytes,
+            max_size_bytes=max_size_bytes,
+            max_days_old=max_days_old,
+            sort_order=self.sort_order,
+            include_mtime=True,
+        )
+        if not files:
+            self._log_status(f"No files found matching '{patterns_str}'")
+            self.last_plan = Plan([], dest_folder)
+            return self.last_plan
+
+        order_desc = {
+            "largest": "largest to smallest",
+            "smallest": "smallest to largest",
+            "oldest": "oldest modified date first",
+            "directory": "directory order",
+        }.get(self.sort_order, "largest to smallest")
+        self._log_status(f"Found {len(files)} files — ordering {order_desc}...")
+        self._log_status("Comparing with the destination...")
+
+        plan = build_plan(
+            files, dest_folder,
+            preserve_structure=preserve_structure,
+            folder_structure=self.folder_structure,
+            number_duplicates=self.number_duplicates,
+            incremental=self.incremental,
+            cancel_check=self.cancel_check,
+            progress=self.plan_progress_callback,
+        )
+        self.last_plan = plan
+        verb = "move" if self.move_mode else "copy"
+        self._log_status(
+            f"Plan: {plan.copy_count} to {verb} ({format_file_size(plan.bytes_to_copy)}), "
+            f"{plan.skipped_count} already handled"
+        )
+        if plan.leftover_temp_files:
+            self._log_status(
+                f"Note: {len(plan.leftover_temp_files)} leftover temporary file(s) from an interrupted copy "
+                f"were found in the destination (names start with {TEMP_PREFIX} and end with {TEMP_SUFFIX}) "
+                f"— they are safe to delete. First: {plan.leftover_temp_files[0]}"
+            )
+        return plan
+
+    # ── copying ──────────────────────────────────────────────────────────────
 
     def copy_files(
         self,
@@ -269,10 +389,10 @@ class FileCopier:
         min_size_bytes: Optional[float] = None,
         max_size_bytes: Optional[float] = None,
         max_days_old: Optional[int] = None,
-        pre_scanned_files: Optional[List[tuple]] = None,
+        plan: Optional[Plan] = None,
     ) -> List[FileOperationResult]:
         """
-        Copy files from source to destination
+        Copy (or move) files from source to destination.
 
         Args:
             source_folder: Source folder path
@@ -280,410 +400,330 @@ class FileCopier:
             file_mask: File mask pattern(s) to match (e.g., "*.jpg, *.png" or "oct*.*")
             preserve_structure: If True, preserve original folder structure
             recursive: If True, search subfolders recursively
-            min_size_bytes: Minimum file size in bytes (inclusive)
-            max_size_bytes: Maximum file size in bytes (inclusive)
-            max_days_old: Maximum file age in days
+            min_size_bytes / max_size_bytes / max_days_old: scan filters
+            plan: a plan from build_plan() (e.g. the one shown in Preview). When
+                  given, the scan and comparison are skipped and exactly that
+                  plan is executed.
 
         Returns:
-            List of FileOperationResult objects
+            FileOperationResult objects for the files that were attempted.
+            Files the plan skipped are counted in self.planned_skips.
 
         Raises:
             ValueError: If validation fails
             OSError: If folders cannot be accessed
         """
-        # Validate inputs
         self.validator.validate_folder_exists(source_folder)
-        patterns = self.validator.validate_file_mask(file_mask)
+        self.validator.validate_file_mask(file_mask)
 
-        # Create destination folder if it doesn't exist
-        self._log_status(f"Checking destination folder...")
+        self._log_status("Checking destination folder...")
         os.makedirs(dest_folder, exist_ok=True)
 
-        # Determine if we should use preserve mode
-        structure = FolderStructure.PRESERVE if preserve_structure else self.folder_structure
-
-        if pre_scanned_files is not None:
-            # File list already determined by preview — skip re-scan
-            filtered_files = pre_scanned_files
-            self._log_status(f"Using {len(filtered_files)} file(s) from preview scan...")
-            if not filtered_files:
-                self._log_status("No files to copy (all up-to-date per preview scan)")
-                return []
-        else:
-            # Scan, filter, and sort in one pass (smallest first)
-            search_mode = "recursively through all subfolders" if recursive else "in root folder only"
-            patterns_str = ", ".join(patterns)
-            self._log_status(f"Reading directories {search_mode}...")
-            self._log_status(f"Gathering file list — matching: {patterns_str}")
-            filtered_files = self.scanner.get_files_with_patterns(
-                source_folder, patterns, recursive,
-                min_size_bytes=min_size_bytes,
-                max_size_bytes=max_size_bytes,
+        verb = "move" if self.move_mode else "copy"
+        if plan is None:
+            plan = self.build_plan(
+                source_folder, dest_folder, file_mask, preserve_structure, recursive,
+                min_size_bytes=min_size_bytes, max_size_bytes=max_size_bytes,
                 max_days_old=max_days_old,
-                sort_order=self.sort_order,
             )
+        else:
+            self.last_plan = plan
+            self._log_status(
+                f"Using the previewed plan: {plan.copy_count} file(s) to {verb}, "
+                f"{plan.skipped_count} already handled..."
+            )
+        return self._execute_plan(plan)
 
-            if not filtered_files:
-                self._log_status(f"No files found matching '{patterns_str}'")
-                return []
+    def _execute_plan(self, plan: Plan) -> List[FileOperationResult]:
+        # The watchdog measures "time since the last disk activity"; planning can take minutes,
+        # so start the clock now rather than at construction.
+        self.last_activity_time = time.time()
+        todo = plan.to_copy
+        planned_skips = plan.skipped_count
+        self.planned_skips = planned_skips
+        verb = "move" if self.move_mode else "copy"
+        verb_past = "moved" if self.move_mode else "copied"
 
-            _order_desc = {
-                "largest": "largest to smallest",
-                "smallest": "smallest to largest",
-                "oldest": "oldest modified date first",
-                "directory": "directory order",
-            }.get(self.sort_order, "largest to smallest")
-            self._log_status(f"Found {len(filtered_files)} files — ordering {_order_desc}...")
+        # One log line per skipped file, with the reason (kept out of the on-screen list).
+        for item in plan.items:
+            if item.action not in WRITE_ACTIONS:
+                self._log_status(self._skip_message(item))
 
-        op_verb = "move" if self.move_mode else "copy"
+        if self.counters_callback:
+            self.counters_callback(0, planned_skips, 0)
+
+        if not todo:
+            self._log_status(f"Nothing to {verb} — everything is already at the destination")
+            self._log_status(f"Operation completed: 0 {verb_past} ({format_file_size(0)}), "
+                             f"{planned_skips} skipped, 0 errors")
+            return []
+
         worker_str = f" ({self.workers} workers)" if self.workers > 1 else ""
-        self._log_status(f"Starting {op_verb} operations{worker_str}...")
+        self._log_status(f"Starting {verb} operations{worker_str}...")
 
-        total = len(filtered_files)
-        results = []
+        total = len(todo)
+        results: List[FileOperationResult] = []
 
         if self.workers <= 1:
             # ── Sequential path ──────────────────────────────────────────────
-            for idx, (full_path, rel_path, file_size) in enumerate(filtered_files, 1):
-                if self.cancel_check and self.cancel_check():
+            copied_n = skipped_n = errors_n = 0
+            for idx, item in enumerate(todo, 1):
+                if self._is_cancelled():
                     self._log_status("Operation cancelled by user")
                     break
 
-                filename = os.path.basename(full_path)
-                show_file_progress = file_size >= 50 * 1024 * 1024
+                filename = os.path.basename(item.source_path)
+                show_file_progress = item.size >= self.MIN_FILE_PROGRESS_SIZE
 
                 if self.progress_callback:
                     self.progress_callback(idx, total, filename, 0 if show_file_progress else -1)
 
-                result = self._process_single_file(
-                    full_path, rel_path, source_folder, dest_folder, structure, idx, total
-                )
+                result = self._copy_one(item, idx, total)
                 results.append(result)
 
                 if self.progress_callback:
                     self.progress_callback(idx, total, filename, 100 if show_file_progress else -1)
 
+                # Running totals — recounting every result after every file is quadratic.
+                if result.cancelled:
+                    pass
+                elif not result.success:
+                    errors_n += 1
+                elif result.destination_file is not None:
+                    copied_n += 1
+                else:
+                    skipped_n += 1
                 if self.counters_callback:
-                    copied_n  = sum(1 for r in results if r.success and r.destination_file is not None)
-                    skipped_n = sum(1 for r in results if r.success and r.destination_file is None)
-                    errors_n  = sum(1 for r in results if not r.success)
-                    self.counters_callback(copied_n, skipped_n, errors_n)
+                    self.counters_callback(copied_n, skipped_n + planned_skips, errors_n)
 
         else:
             # ── Parallel path ─────────────────────────────────────────────────
             _lock = threading.Lock()
             _counts = [0, 0, 0, 0]  # [completed, copied, skipped, errors]
 
-            def _worker(item):
-                full_path, rel_path, _ = item
-                if self.cancel_check and self.cancel_check():
-                    return FileOperationResult(
-                        success=True, source_file=os.path.basename(full_path),
-                        destination_file=None, error_message="Cancelled"
-                    )
-                result = self._process_single_file(
-                    full_path, rel_path, source_folder, dest_folder, structure, 0, 0
-                )
-                fname = os.path.basename(full_path)
+            def _worker(item: PlanItem):
+                result = self._copy_one(item, 0, 0)
+                fname = os.path.basename(item.source_path)
                 with _lock:
                     _counts[0] += 1
                     self.last_activity_time = time.time()
-                    if result.success and result.destination_file is not None:
-                        _counts[1] += 1
-                    elif result.success:
-                        _counts[2] += 1
-                    else:
+                    if result.cancelled:
+                        pass
+                    elif not result.success:
                         _counts[3] += 1
+                    elif result.destination_file is not None:
+                        _counts[1] += 1
+                    else:
+                        _counts[2] += 1
                     if self.progress_callback:
                         self.progress_callback(_counts[0], total, fname, -1)
                     if self.counters_callback:
-                        self.counters_callback(_counts[1], _counts[2], _counts[3])
+                        self.counters_callback(_counts[1], _counts[2] + planned_skips, _counts[3])
                 return result
 
             with ThreadPoolExecutor(max_workers=self.workers) as executor:
-                futures = {executor.submit(_worker, item): item for item in filtered_files}
+                futures = {executor.submit(_worker, item): item for item in todo}
                 for future in as_completed(futures):
                     try:
                         results.append(future.result())
                     except Exception as e:
-                        fname = os.path.basename(futures[future][0])
+                        fname = os.path.basename(futures[future].source_path)
                         self._log_status(f"Error: {fname} — {e}")
                         results.append(FileOperationResult(
                             success=False, source_file=fname, error_message=str(e)
                         ))
 
-
         # Summary
-        op_verb_past = "moved" if self.move_mode else "copied"
-        if self.cancel_check and self.cancel_check():
-            copied_count = sum(1 for r in results if r.success and r.destination_file is not None)
-            self._log_status(f"Operation cancelled: {copied_count} files {op_verb_past} before cancellation")
+        summary = summarize_results(results, planned_skips)
+        if self._is_cancelled():
+            self._log_status(f"Operation cancelled: {summary.copied} files {verb_past} before cancellation")
         else:
-            copied_count = sum(1 for r in results if r.success and r.destination_file is not None)
-            skipped_count = sum(1 for r in results if r.success and r.destination_file is None)
-            error_count = sum(1 for r in results if not r.success)
-            total_bytes = sum(r.file_size for r in results if r.success and r.destination_file is not None)
             self._log_status(
-                f"Operation completed: {copied_count} {op_verb_past} ({format_file_size(total_bytes)}), "
-                f"{skipped_count} skipped, {error_count} errors"
+                f"Operation completed: {summary.copied} {verb_past} ({format_file_size(summary.bytes_copied)}), "
+                f"{summary.skipped} skipped, {summary.errors} errors"
             )
-
         return results
 
-    def _process_single_file(
-        self,
-        source_path: str,
-        rel_path: str,
-        source_root: str,
-        dest_folder: str,
-        structure: FolderStructure,
-        idx: int = 0,
-        total: int = 0
-    ) -> FileOperationResult:
+    def _copy_one(self, item: PlanItem, idx: int = 0, total: int = 0) -> FileOperationResult:
         """
-        Process a single file
+        Carry out one planned write.
 
-        Args:
-            source_path: Full path to source file
-            rel_path: Relative path from source root
-            source_root: Root source folder
-            dest_folder: Destination folder path
-            structure: Folder organization structure
-
-        Returns:
-            FileOperationResult object
+        The file is copied to a temporary name next to its destination and only
+        renamed into place once it is complete (and verified, if requested). A
+        cancel or an error therefore never leaves a half-written destination
+        file, and in Move Mode the source is deleted only after a complete copy.
         """
-        filename = os.path.basename(source_path)
-
-        # Determine destination folder with organization
-        if structure == FolderStructure.PRESERVE:
-            # Preserve original folder structure
-            rel_dir = os.path.dirname(rel_path)
-            if rel_dir:
-                final_dest_folder = self.organizer.create_folder_structure(dest_folder, rel_dir)
-            else:
-                final_dest_folder = dest_folder
-        else:
-            # Use specified folder organization
-            subfolder = self.organizer.get_destination_subfolder(
-                source_path,
-                structure,
-                source_root,
-                use_file_date=True
-            )
-            if subfolder:
-                final_dest_folder = self.organizer.create_folder_structure(dest_folder, subfolder)
-            else:
-                final_dest_folder = dest_folder
-
-        LARGE_FILE_THRESHOLD = 120 * 1024 * 1024  # 120 MB — use chunked I/O above this
-        MIN_FILE_PROGRESS_SIZE = 50 * 1024 * 1024  # 50 MB — skip per-file bar below this
-        CHUNK_SIZE = 8 * 1024 * 1024  # 8 MB
-        MAX_RETRIES = 3
-        RETRY_DELAY = 1.5
-
-        dest_path = ""
+        src = item.source_path
+        dst = item.pre_dest
+        filename = os.path.basename(src)
+        tmp = ""
         try:
-            # ── Thread-safe filename resolution + reservation ─────────────────
-            # Lock ensures two parallel workers can't claim the same dest path.
-            with self._filename_lock:
-                final_filename = self._truncate_path(final_dest_folder, filename)
-                dest_path = os.path.join(final_dest_folder, final_filename)
-                skip_result = None
+            if self._is_cancelled():
+                return FileOperationResult(success=True, source_file=filename,
+                                           error_message="Cancelled", cancelled=True)
 
-                if os.path.exists(dest_path):
-                    if self.incremental:
-                        try:
-                            src_stat = os.stat(source_path)
-                            dst_stat = os.stat(dest_path)
-                            if (src_stat.st_size == dst_stat.st_size and
-                                    abs(src_stat.st_mtime - dst_stat.st_mtime) <= 2.0):
-                                self._log_status(f"Skipped (unchanged): {filename}")
-                                skip_result = FileOperationResult(
-                                    success=True, source_file=filename,
-                                    destination_file=None, error_message="Skipped (unchanged)"
-                                )
-                            # else: file changed — fall through and overwrite it
-                        except OSError:
-                            pass
-
-                    if skip_result is None and not self.incremental:
-                        # Non-incremental mode: handle duplicates per user setting
-                        if self.number_duplicates:
-                            # Before renaming, verify whether the collision is a true
-                            # duplicate (identical content) or just a name/size coincidence.
-                            # Only hash when sizes match — different sizes skip straight to
-                            # rename with zero I/O overhead.
-                            try:
-                                if os.path.getsize(source_path) == os.path.getsize(dest_path):
-                                    src_hash = self._compute_checksum(source_path)
-                                    self.last_activity_time = time.time()
-                                    dst_hash = self._compute_checksum(dest_path)
-                                    self.last_activity_time = time.time()
-                                    if src_hash == dst_hash:
-                                        self._log_status(f"Skipped (identical): {filename}")
-                                        skip_result = FileOperationResult(
-                                            success=True, source_file=filename,
-                                            destination_file=None,
-                                            error_message="Skipped (identical)"
-                                        )
-                            except OSError:
-                                pass
-
-                            if skip_result is None:
-                                base_name, ext = os.path.splitext(filename)
-                                counter = 1
-                                while os.path.exists(dest_path):
-                                    final_filename = f"{base_name}_{counter:03d}{ext}"
-                                    dest_path = os.path.join(final_dest_folder, final_filename)
-                                    counter += 1
-                                self._log_status(f"Duplicate found: {filename} → {final_filename}")
-                        else:
-                            self._log_status(f"Skipped (duplicate): {filename}")
-                            skip_result = FileOperationResult(
-                                success=True, source_file=filename,
-                                destination_file=None, error_message="Skipped (duplicate)"
-                            )
-
-                if skip_result is None:
-                    # Reserve the path so other workers pick a different name
-                    try:
-                        open(dest_path, 'wb').close()
-                    except OSError:
-                        pass
-
-            if skip_result is not None:
-                return skip_result
-
-            # Get file size
-            file_size = os.path.getsize(source_path)
+            dest_dir = os.path.dirname(dst)
+            os.makedirs(dest_dir, exist_ok=True)
+            file_size = os.path.getsize(src)
             self.last_activity_time = time.time()
+            tmp = os.path.join(dest_dir, f"{TEMP_PREFIX}{uuid.uuid4().hex[:12]}{TEMP_SUFFIX}")
 
-            _show_transfer = (self.transfer_callback is not None and file_size >= MIN_FILE_PROGRESS_SIZE)
-            if _show_transfer:
-                self.transfer_callback(source_path, filename, 0)
+            show_transfer = self.transfer_callback is not None and file_size >= self.MIN_FILE_PROGRESS_SIZE
+            if show_transfer:
+                self.transfer_callback(src, filename, 0)
 
-            # Copy with retry loop (handles transient network errors)
             start_time = time.time()
-            for attempt in range(MAX_RETRIES):
-                try:
-                    if file_size >= LARGE_FILE_THRESHOLD:
-                        # Always chunk large files so last_activity_time stays current
-                        copied_bytes = 0
-                        with open(source_path, 'rb') as src, open(dest_path, 'wb') as dst:
-                            while True:
-                                if self.cancel_check and self.cancel_check():
-                                    break
-                                chunk = src.read(CHUNK_SIZE)
-                                if not chunk:
-                                    break
-                                dst.write(chunk)
-                                copied_bytes += len(chunk)
-                                self.last_activity_time = time.time()
-                                pct = int(copied_bytes / file_size * 100)
-                                if self.progress_callback and total > 0:
-                                    self.progress_callback(idx, total, filename, pct)
-                                if _show_transfer:
-                                    self.transfer_callback(source_path, filename, pct)
-                        shutil.copystat(source_path, dest_path)
-                    else:
-                        shutil.copy2(source_path, dest_path)
-                    break  # copy succeeded
-                except OSError as copy_err:
-                    if self.cancel_check and self.cancel_check():
-                        break
-                    # Detect unrecoverable errors — retrying more files would be pointless
-                    _winerr = getattr(copy_err, 'winerror', None)
-                    _FATAL_WINERRORS = {
-                        112,   # ERROR_DISK_FULL
-                        39,    # ERROR_DISK_FULL (alt)
-                        21,    # ERROR_NOT_READY (drive disconnected)
-                        1117,  # ERROR_IO_DEVICE
-                        1392,  # ERROR_FILE_CORRUPT
-                    }
-                    _is_fatal = copy_err.errno == 28 or _winerr in _FATAL_WINERRORS
-                    if _is_fatal:
-                        _reason = (
-                            "Destination disk is full" if (_winerr in (112, 39) or copy_err.errno == 28)
-                            else "Destination drive is not ready or disconnected" if _winerr in (21, 1117)
-                            else "Destination disk or file is corrupt"
-                        )
-                        fatal_msg = f"{_reason}: {copy_err}"
-                        self._log_status(f"FATAL: {fatal_msg}")
-                        if self.fatal_error_callback:
-                            self.fatal_error_callback(fatal_msg)
-                        raise OSError(fatal_msg) from copy_err
-                    # If destination is read-only, strip the flag and retry immediately
-                    err_str = str(copy_err)
-                    if copy_err.errno == 13 and dest_path in err_str:
-                        try:
-                            import stat as _stat
-                            os.chmod(dest_path, _stat.S_IWRITE | _stat.S_IREAD)
-                            continue  # retry without counting this as an attempt
-                        except OSError:
-                            pass
-                    side = "reading source" if source_path in err_str else "writing destination" if dest_path in err_str else "during copy"
-                    if attempt < MAX_RETRIES - 1:
-                        self._log_status(f"Retry {attempt + 1}/{MAX_RETRIES - 1}: {filename} ({side}) — {copy_err}")
-                        time.sleep(RETRY_DELAY)
-                    else:
-                        raise OSError(f"[{side}] {copy_err}") from copy_err
+            try:
+                completed = self._copy_to_temp(src, tmp, file_size, filename, idx, total, show_transfer)
+            finally:
+                if show_transfer:                  # always clear the live-transfer row, even if the copy failed
+                    self.transfer_callback(src, filename, -1)
             copy_time = time.time() - start_time
-            if _show_transfer:
-                self.transfer_callback(source_path, filename, -1)
 
-            # Checksum verification
+            if not completed:                         # Cancel pressed part-way through this file
+                self._discard(tmp)
+                return FileOperationResult(success=True, source_file=filename, file_size=file_size,
+                                           error_message="Cancelled", cancelled=True)
+
             checksum_ok: Optional[bool] = None
-            if self.verify_checksum and not (self.cancel_check and self.cancel_check()):
-                src_hash = self._compute_checksum(source_path)
-                dst_hash = self._compute_checksum(dest_path)
-                checksum_ok = (src_hash == dst_hash)
+            if self.verify_checksum:
+                checksum_ok = compute_md5(src) == compute_md5(tmp)
                 if not checksum_ok:
+                    self._discard(tmp)
                     self._log_status(f"CHECKSUM FAILED: {filename}")
                     return FileOperationResult(
-                        success=False,
-                        source_file=filename,
-                        destination_file=final_filename,
+                        success=False, source_file=filename,
                         error_message="Checksum mismatch — file may be corrupted",
-                        file_size=file_size,
-                        copy_time=copy_time,
-                        checksum_verified=False
+                        file_size=file_size, copy_time=copy_time, checksum_verified=False,
                     )
 
-            # Move mode: delete source after successful copy+verify
+            final_path = self._finalize(tmp, dst, overwrite=item.action is Action.REFRESH)
+            tmp = ""                                   # now in place
+            final_name = os.path.basename(final_path)
+
+            # Move mode: delete the source only after a complete copy is in place.
             if self.move_mode:
                 try:
-                    os.remove(source_path)
+                    if os.path.getsize(final_path) == file_size:
+                        os.remove(src)
+                    else:
+                        self._log_status(f"Warning: source not deleted after move: {filename} — "
+                                         f"destination size differs from the source")
                 except OSError as del_err:
                     self._log_status(f"Warning: source not deleted after move: {filename} — {del_err}")
 
+            if item.action is Action.NUMBERED or final_path != dst:
+                self._log_status(f"Duplicate found: {filename} → {final_name}")
+            elif item.action is Action.REFRESH:
+                self._log_status(f"Updated (source changed): {src}")
+
             # Only log large files individually; small files are counted silently
-            verb = "Moved" if self.move_mode else "Copied"
-            if file_size >= LARGE_FILE_THRESHOLD:
-                size_str = self._format_file_size(file_size)
-                time_str = f"{copy_time:.2f}s"
+            if file_size >= self.LARGE_FILE_THRESHOLD:
+                verb = "Moved" if self.move_mode else "Copied"
                 verified_tag = " ✓" if checksum_ok else ""
-                self._log_status(f"{verb} (large): {filename} ({size_str}, {time_str}){verified_tag}")
+                self._log_status(f"{verb} (large): {filename} ({self._format_file_size(file_size)}, "
+                                 f"{copy_time:.2f}s){verified_tag}")
 
             return FileOperationResult(
                 success=True,
                 source_file=filename,
-                destination_file=final_filename,
+                destination_file=final_name,
                 file_size=file_size,
                 copy_time=copy_time,
-                checksum_verified=checksum_ok
+                checksum_verified=checksum_ok,
             )
         except Exception as e:
+            self._discard(tmp)
             err_str = str(e)
-            if source_path in err_str:
+            if src in err_str:
                 side = "reading source"
-            elif dest_path and dest_path in err_str:
+            elif (tmp and tmp in err_str) or dst in err_str:
                 side = "writing destination"
             else:
                 side = "copying"
             self._log_status(f"Error {side} — {filename}: {e}")
-            return FileOperationResult(
-                success=False,
-                source_file=filename,
-                error_message=str(e)
-            )
+            return FileOperationResult(success=False, source_file=filename, error_message=str(e))
+
+    def _copy_to_temp(self, src: str, tmp: str, file_size: int, filename: str,
+                      idx: int, total: int, show_transfer: bool) -> bool:
+        """
+        Copy src to tmp, retrying transient (e.g. network) errors.
+        Returns False if Cancel was pressed before the copy finished.
+        """
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                if file_size >= self.LARGE_FILE_THRESHOLD:
+                    # Always chunk large files so last_activity_time stays current
+                    copied_bytes = 0
+                    with open(src, 'rb') as fsrc, open(tmp, 'wb') as fdst:
+                        while True:
+                            if self._is_cancelled():
+                                return False
+                            chunk = fsrc.read(self.CHUNK_SIZE)
+                            if not chunk:
+                                break
+                            fdst.write(chunk)
+                            copied_bytes += len(chunk)
+                            self.last_activity_time = time.time()
+                            pct = int(copied_bytes / file_size * 100)
+                            if self.progress_callback and total > 0:
+                                self.progress_callback(idx, total, filename, pct)
+                            if show_transfer:
+                                self.transfer_callback(src, filename, pct)
+                    shutil.copystat(src, tmp)
+                else:
+                    shutil.copyfile(src, tmp)
+                    shutil.copystat(src, tmp)
+                return True
+            except OSError as copy_err:
+                if self._is_cancelled():
+                    return False
+                # Unrecoverable errors — retrying more files would be pointless
+                winerr = getattr(copy_err, 'winerror', None)
+                if copy_err.errno == 28 or winerr in self._FATAL_WINERRORS:
+                    reason = (
+                        "Destination disk is full" if (winerr in (112, 39) or copy_err.errno == 28)
+                        else "Destination drive is not ready or disconnected" if winerr in (21, 1117)
+                        else "Destination disk or file is corrupt"
+                    )
+                    fatal_msg = f"{reason}: {copy_err}"
+                    self._log_status(f"FATAL: {fatal_msg}")
+                    if self.fatal_error_callback:
+                        self.fatal_error_callback(fatal_msg)
+                    raise OSError(fatal_msg) from copy_err
+                err_str = str(copy_err)
+                side = "reading source" if src in err_str else "writing destination" if tmp in err_str else "during copy"
+                if attempt < self.MAX_RETRIES - 1:
+                    self._log_status(f"Retry {attempt + 1}/{self.MAX_RETRIES - 1}: {filename} ({side}) — {copy_err}")
+                    time.sleep(self.RETRY_DELAY)
+                else:
+                    raise OSError(f"[{side}] {copy_err}") from copy_err
+        return True
+
+    def _finalize(self, tmp: str, dst: str, overwrite: bool) -> str:
+        """
+        Put the finished temp file at its destination and return the final path.
+
+        overwrite=True  (REFRESH): replace the older copy of this same file.
+        overwrite=False (NEW / NUMBERED): never replace anything. If the name was
+        taken after the plan was made, fall back to the next free numbered name.
+        """
+        if overwrite:
+            try:
+                os.replace(tmp, dst)
+            except PermissionError:
+                import stat as _stat
+                os.chmod(dst, _stat.S_IWRITE | _stat.S_IREAD)     # read-only destination: clear the flag
+                os.replace(tmp, dst)
+            return dst
+
+        target = dst
+        stem, ext = os.path.splitext(dst)
+        n = 0
+        while True:
+            try:
+                os.rename(tmp, target)        # on Windows this refuses to replace an existing file
+                return target
+            except FileExistsError:
+                n += 1
+                target = f"{stem}_{n:03d}{ext}"

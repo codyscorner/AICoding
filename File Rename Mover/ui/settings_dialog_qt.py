@@ -55,9 +55,8 @@ class SettingsDialogQt(QDialog):
         self.source_entry.setText(self.app.config.get("default_source_folder", ""))
         source_layout.addWidget(self.source_entry)
 
-        source_browse_btn = QPushButton("...")
+        source_browse_btn = QPushButton("Browse")
         source_browse_btn.setProperty("cssClass", "browse")
-        source_browse_btn.setFixedWidth(40)
         source_browse_btn.clicked.connect(self._browse_source)
         source_layout.addWidget(source_browse_btn)
         layout.addLayout(source_layout)
@@ -69,9 +68,8 @@ class SettingsDialogQt(QDialog):
         self.dest_entry.setText(self.app.config.get("default_destination_folder", ""))
         dest_layout.addWidget(self.dest_entry)
 
-        dest_browse_btn = QPushButton("...")
+        dest_browse_btn = QPushButton("Browse")
         dest_browse_btn.setProperty("cssClass", "browse")
-        dest_browse_btn.setFixedWidth(40)
         dest_browse_btn.clicked.connect(self._browse_destination)
         dest_layout.addWidget(dest_browse_btn)
         layout.addLayout(dest_layout)

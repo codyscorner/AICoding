@@ -64,18 +64,17 @@ class VideoPlayerPanel(QWidget):
         toolbar.setContentsMargins(6, 4, 6, 4)
         toolbar.setSpacing(6)
 
-        self.play_pause_btn = QPushButton("▶")
-        self.play_pause_btn.setFixedWidth(36)
+        self.play_pause_btn = QPushButton("▶ Play")
+        # Text flips Play/Pause at runtime; hold the longer width so the bar doesn't jump.
+        self.play_pause_btn.setMinimumWidth(self.play_pause_btn.fontMetrics().horizontalAdvance("⏸ Pause") + 28)
         self.play_pause_btn.clicked.connect(self.toggle_play_pause)
         toolbar.addWidget(self.play_pause_btn)
 
-        self.stop_btn = QPushButton("■")
-        self.stop_btn.setFixedWidth(36)
+        self.stop_btn = QPushButton("■ Stop")
         self.stop_btn.clicked.connect(self._stop)
         toolbar.addWidget(self.stop_btn)
 
-        self.fullscreen_btn = QPushButton("⛶")
-        self.fullscreen_btn.setFixedWidth(36)
+        self.fullscreen_btn = QPushButton("⛶ Full screen")
         self.fullscreen_btn.clicked.connect(self.toggle_fullscreen)
         toolbar.addWidget(self.fullscreen_btn)
 
@@ -225,7 +224,7 @@ class VideoPlayerPanel(QWidget):
         self.player.stop()
 
     def _on_playback_state_changed(self, state) -> None:
-        self.play_pause_btn.setText("⏸" if state == QMediaPlayer.PlaybackState.PlayingState else "▶")
+        self.play_pause_btn.setText("⏸ Pause" if state == QMediaPlayer.PlaybackState.PlayingState else "▶ Play")
 
     def _on_position_changed(self, position_ms: int) -> None:
         if not self._seeking:
