@@ -1,8 +1,7 @@
 """Queue viewer: what's running now and what's lined up behind it.
 
 ComfyUI runs one prompt at a time, so every tab shares a single queue. Pile a
-few runs on while switching between Image → Video, Video → Extend and Text →
-Video and the
+few runs on while switching between Image → Video and Text → Video and the
 count alone ("3 queued") stops being enough to tell whether the thing you're
 about to click is already in there — this lists each waiting run with the
 frame it starts from, its workflow, source, prompt and settings, and lets rows
@@ -195,10 +194,8 @@ class QueueDialog(QDialog):
         icon = self._thumb_icon(req.thumb_path)
         if icon is not None:
             item.setIcon(1, icon)
-        frame = {
-            "image": "the source image",
-            "video": "the source video's last frame — where the extension picks up",
-        }.get(req.source_kind, "nothing — text to video, the prompt is the whole input")
+        frame = ("the source image" if req.source_kind == "image"
+                 else "nothing — text to video, the prompt is the whole input")
         tip = (f"{position}\n\nWorkflow: {req.workflow_label}\n"
                f"Source: {req.source_path if req.source_path is not None else req.source_name}\n"
                f"Starts from: {frame}\n"

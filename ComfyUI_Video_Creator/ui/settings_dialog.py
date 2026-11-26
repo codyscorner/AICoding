@@ -85,8 +85,6 @@ class SettingsDialog(QDialog):
         fl.setSpacing(10)
         self._image_dir = self._folder_row(fl, "Images:", config.get("image_dir", ""),
                                            "Folder of starting images (Image → Video tab)…")
-        self._video_dir = self._folder_row(fl, "Videos:", config.get("video_dir", ""),
-                                           "Folder of videos to extend (Video → Extend tab)…")
         self._workflow_dir = self._folder_row(fl, "Workflows:", config.get("workflow_dir", ""),
                                               "Folder of API-format workflow .json files (subfolders included)…")
         self._output_dir = self._folder_row(fl, "Output:", config.get("output_dir", ""),
@@ -954,7 +952,6 @@ class SettingsDialog(QDialog):
         c.set("comfyui_url", self._local_url.text().strip())
         c.set("runpod_url", self._runpod_url.text().strip())
         c.set("image_dir", self._image_dir.text().strip())
-        c.set("video_dir", self._video_dir.text().strip())
         c.set("workflow_dir", self._workflow_dir.text().strip())
         c.set("output_dir", self._output_dir.text().strip())
         c.set("loras_dir", self._loras_dir.text().strip())

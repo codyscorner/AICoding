@@ -1,5 +1,17 @@
 # Changelog — ComfyUI Video Creator
 
+### v2.22.0
+- **Removed the Video → Extend tab.** The app now makes single videos only (Image → Video and Text → Video, plus the Library); extending is the ComfyUI Chain Automator's job. Gone with the tab: the video picker and **Videos** folder setting, the *Video input* mode and *Append the new clip* options, ffmpeg stitching, source-size and codec matching, `_EXT` / `_extended` output names, **Send to Library** / **Hide** / **Unhide** / **Hide short clips** (`extend_marks.py`), and the Library's **Send to Extend** button
+- Existing history and favorites keep working: entries saved by earlier versions still match the same run made now, so no duplicate rows and no lost stars. Videos you made by extending stay in the Library with their prompt and settings; **Reuse Settings** on one of them explains that extending was removed
+- Your workflows, videos and settings files are not changed. Leftover extend settings in the config and `extend_hidden.json` are simply ignored
+- **The EXE is now a one-folder build** (`ComfyUI_Video_Creator.exe` + `_internal\`) so it starts faster. Same folder and file name, so existing shortcuts still work. `build_exe.py` now keeps the previous EXE and `_internal` as timestamped `.bak` names on every deploy, and asks you to close the app if it is running
+
+### v2.21.5
+- **Arrow keys skip 2 seconds in the built-in video player.** **→** jumps 2 s forward, **←** jumps 2 s back (clamped to the start/end of the clip), also while the video is full-screen. These keys used to switch to the previous/next clip in a playlist; that moved to **Page Up / Page Down** (the ⏮ ⏭ buttons are unchanged)
+
+### v2.21.4
+- **Instant feedback after clicking Run / Extend.** On RunPod the app first compares the workflow's model files with the pod, which can take a minute or two — during that time the old yellow **DONE** bar stayed on screen and the app looked frozen. Now, as soon as you click, the bar switches to the animated busy state with "Preparing — checking models on the pod before starting…" and the same line is written to the log (once per batch, so a multi-select doesn't repeat it). Skipped when a run is already in progress, so a running job's bar is never disturbed
+
 ### v2.21.3
 - **Queued sources are tagged on the thumbnails.** On Image → Video (and Video → Extend) every picture that is running or waiting in the queue now carries a badge in its top-left corner: a green **▶ RUNNING** for the active run and amber **#1, #2, #3…** for the waiting ones, in queue order. The badges follow the queue as it changes (a run finishes, you reorder, remove or clear in the Queue window), and a source queued twice shows both positions
 

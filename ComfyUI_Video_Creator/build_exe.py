@@ -13,11 +13,13 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).parent
 DIST = ROOT / "dist"
 APP_NAME = "ComfyUI_Video_Creator"
+INTERNAL = "_internal"                           # one-folder build: the runtime lives here
 OUTPUT = Path(r"P:\Apps\AICoded\ComfyUI Video Creator")
 FFMPEG_SOURCES = [
     Path(r"P:\Apps\AICoded\ComfyUI Chain Automator\ffmpeg.exe"),
@@ -48,11 +50,46 @@ def version_from_main() -> str:
     return m.group(1) if m else "?"
 
 
+def deploy(built: Path, output: Path):
+    """Swap the EXE and its _internal folder into `output`. What was there is
+    kept under timestamped .bak names (never overwritten, never deleted);
+    settings and data beside the EXE are not touched. The app must be closed:
+    a running one-folder app has its libraries loaded from _internal."""
+    output.mkdir(parents=True, exist_ok=True)
+    target = output / f"{APP_NAME}.exe"
+    internal = output / INTERNAL
+    if target.exists():
+        try:
+            with open(target, "ab"):
+                pass
+        except OSError:
+            print(f"ERROR: {target} is running. Close the app, then build again.")
+            sys.exit(1)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    moved: list[tuple[Path, Path]] = []          # (backup, original)
+    try:
+        for current, backup in ((internal, output / f"{INTERNAL}_{stamp}.bak"),
+                                (target, output / f"{APP_NAME}_{stamp}.exe.bak")):
+            if current.exists():
+                current.rename(backup)
+                moved.append((backup, current))
+                print(f"Backed up {current.name} -> {backup.name}")
+        shutil.copytree(built / INTERNAL, internal)
+        shutil.copy2(built / target.name, target)
+    except OSError as e:
+        print(f"ERROR: deploy failed ({e}) — putting the previous version back")
+        for backup, original in moved:
+            if original.is_dir():
+                shutil.rmtree(original)          # the half-copied new one
+            backup.replace(original)
+        sys.exit(1)
+
+
 def main():
     print(f"Building {APP_NAME} v{version_from_main()} with {sys.executable} ...")
     cmd = [
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
-        "--onefile", "--windowed",
+        "--onedir", "--contents-directory", INTERNAL, "--windowed",
         "--name", APP_NAME,
         "--icon", str(ROOT / "app_icon.ico"),
         "--add-data", f"{ROOT / 'app_icon.ico'};.",
@@ -70,40 +107,24 @@ def main():
     if result.returncode != 0:
         sys.exit(result.returncode)
 
-    exe_src = DIST / f"{APP_NAME}.exe"
-    if not exe_src.exists():
-        print("EXE not found in dist/ — check the PyInstaller output above")
+    built = DIST / APP_NAME                      # one-folder build output
+    exe_src = built / f"{APP_NAME}.exe"
+    if not exe_src.exists() or not (built / INTERNAL).is_dir():
+        print("EXE or _internal not found in dist/ — check the PyInstaller output above")
         sys.exit(1)
-    print(f"Built {exe_src} ({exe_src.stat().st_size // (1024 * 1024)} MB)")
+    size = sum(f.stat().st_size for f in built.rglob("*") if f.is_file())
+    print(f"Built {built} ({size // (1024 * 1024)} MB in the folder)")
     if "--no-deploy" in sys.argv:
         print(f"--no-deploy: leaving it in dist/, {OUTPUT} untouched")
         return
 
-    OUTPUT.mkdir(parents=True, exist_ok=True)
-    target = OUTPUT / exe_src.name
-    stale = OUTPUT / f"{APP_NAME}.old.exe"
-    if stale.exists():
-        try:
-            stale.unlink()   # fails harmlessly if that old instance is still running
-        except OSError:
-            pass
-    # A running EXE can't be overwritten, but Windows lets it be renamed —
-    # so the deploy never has to wait for the user to close the app; the
-    # next launch simply picks up the new file.
-    if target.exists():
-        try:
-            with open(target, "ab"):
-                pass
-        except OSError:
-            print("Deployed EXE is running — renaming it aside so the new build can land")
-            target.replace(stale)
-    shutil.copy2(exe_src, target)
+    deploy(built, OUTPUT)
 
     shutil.copy2(ROOT / "app_icon.ico", OUTPUT / "app_icon.ico")
     # Never overwrite the live config next to the deployed EXE.
     if not (OUTPUT / "video_creator_config.json").exists() and (ROOT / "video_creator_config.json").exists():
         shutil.copy2(ROOT / "video_creator_config.json", OUTPUT / "video_creator_config.json")
-    # Ship ffmpeg next to the EXE (thumbnails, last-frame, stitching).
+    # Ship ffmpeg next to the EXE (thumbnails, video details).
     if not (OUTPUT / "ffmpeg.exe").exists():
         for src in FFMPEG_SOURCES:
             if src.exists():

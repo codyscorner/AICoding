@@ -1,5 +1,5 @@
 """Library tab: browse finished videos (the Output folder by default),
-play them, delete them, send one back to the Extend tab, and see the
+play them, delete them, and see the
 prompt + settings that produced each one (from the prompt history)."""
 
 from __future__ import annotations
@@ -60,8 +60,6 @@ def _entry_from_embedded(prompt_data: dict) -> dict:
         "steps": a.sampler_steps[0] if a.sampler_steps else None,
         "megapixels": a.mp_fields[0].value if a.mp_fields else None,
         "loras": loras,
-        "video_input_mode": None,
-        "extend_stitch": None,
         # A graph with no image or video loader can only have been a
         # text-to-video run — the same test the Text → Video tab applies.
         "text_to_video": not (a.accepts_image or a.accepts_video),
@@ -85,7 +83,6 @@ def _fmt_dur(seconds: float) -> str:
 
 class LibraryTab(QWidget):
     play_requested = pyqtSignal(list)        # list[str] playlist
-    send_to_extend = pyqtSignal(object)      # Path
     reuse_requested = pyqtSignal(object, object, object)  # result video Path, workflow Path, history entry dict
     folder_changed = pyqtSignal(str)
     files_moved = pyqtSignal()               # videos were rearranged on disk (Sort into workflow folders)
@@ -106,7 +103,7 @@ class LibraryTab(QWidget):
 
         self.browser = MediaBrowser(
             "video", self.effective_folder(), config.get("library_sort", "Newest First"),
-            ffmpeg_getter, multi=True, last_frame=False, title="Library", show_delete=False,
+            ffmpeg_getter, multi=True, title="Library", show_delete=False,
             hint="Finished videos — Output folder unless you pick another one",
         )
         self.browser.selection_changed.connect(lambda _p: self._update_details())
@@ -135,7 +132,7 @@ class LibraryTab(QWidget):
         scope_row.addWidget(self._scope_combo, stretch=1)
         self._follow_chk = QCheckBox("Follow the active workflow")
         self._follow_chk.setToolTip(
-            "On: switching workflow on the Image / Video / Text tab switches this list to that "
+            "On: switching workflow on the Image / Text tab switches this list to that "
             "workflow's videos, so you can compare against what it already made.\n"
             "Picking something else from the list turns this off.")
         self._follow_chk.setChecked(bool(config.get("library_follow", True)))
@@ -186,13 +183,9 @@ class LibraryTab(QWidget):
         play_btn.setToolTip("Play the selected video(s) back-to-back")
         play_btn.clicked.connect(self._play_selected)
         row1.addWidget(play_btn)
-        extend_btn = QPushButton("🎬  Send to Extend")
-        extend_btn.setToolTip("Use this video as the source on the Video → Extend tab")
-        extend_btn.clicked.connect(self._send_selected)
-        row1.addWidget(extend_btn)
         self._reuse_btn = QPushButton("🔁 Reuse Settings")
         self._reuse_btn.setToolTip(
-            "Reload this run's prompt, LoRAs, seed, steps and source image/video into the matching "
+            "Reload this run's prompt, LoRAs, seed, steps and source image into the matching "
             "tab so you can tweak it and try again")
         self._reuse_btn.setEnabled(False)
         self._reuse_btn.clicked.connect(self._reuse_selected)
@@ -405,11 +398,6 @@ class LibraryTab(QWidget):
         paths = self._selected()
         if paths:
             self.play_requested.emit([str(p) for p in paths])
-
-    def _send_selected(self):
-        paths = self._selected()
-        if paths:
-            self.send_to_extend.emit(paths[0])
 
     def _reuse_selected(self):
         paths = self._selected()

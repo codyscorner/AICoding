@@ -45,6 +45,9 @@ class _FileLoader(QThread):
         self.loaded.emit(self._path, QByteArray(data))
 
 
+SKIP_MS = 2000   # ← / → jump
+
+
 class VideoPlayerDialog(QDialog):
     closed = pyqtSignal()
 
@@ -144,8 +147,12 @@ class VideoPlayerDialog(QDialog):
         QShortcut(QKeySequence(Qt.Key.Key_Space), self, self._toggle_play)
         QShortcut(QKeySequence(Qt.Key.Key_F), self, self._toggle_fullscreen)
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self.close)
-        QShortcut(QKeySequence(Qt.Key.Key_Left), self, self._prev)
-        QShortcut(QKeySequence(Qt.Key.Key_Right), self, self._next)
+        # Arrows skip within the clip; clip-to-clip moves to PageUp/PageDown
+        # (and the ⏮ ⏭ buttons).
+        QShortcut(QKeySequence(Qt.Key.Key_Left), self, lambda: self._skip(-SKIP_MS))
+        QShortcut(QKeySequence(Qt.Key.Key_Right), self, lambda: self._skip(SKIP_MS))
+        QShortcut(QKeySequence(Qt.Key.Key_PageUp), self, self._prev)
+        QShortcut(QKeySequence(Qt.Key.Key_PageDown), self, self._next)
 
         self._cache: dict[str, QByteArray] = {}
         self._loading: dict[str, _FileLoader] = {}
@@ -239,6 +246,13 @@ class VideoPlayerDialog(QDialog):
             self._index += 1
             self._load_current()
 
+    def _skip(self, delta_ms: int):
+        """Jump forward/back within the current clip, clamped to its length."""
+        pos = self._player.position() + delta_ms
+        if self._duration_ms > 0:
+            pos = min(pos, max(self._duration_ms - 1, 0))
+        self._player.setPosition(max(pos, 0))
+
     def _toggle_play(self):
         if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self._player.pause()
@@ -277,6 +291,11 @@ class VideoPlayerDialog(QDialog):
                 return True
             if key == Qt.Key.Key_Space:
                 self._toggle_play()
+                return True
+            if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+                # Fullscreen video widget is its own window, so the dialog's
+                # shortcuts don't see these keys.
+                self._skip(SKIP_MS if key == Qt.Key.Key_Right else -SKIP_MS)
                 return True
         return super().eventFilter(obj, event)
 

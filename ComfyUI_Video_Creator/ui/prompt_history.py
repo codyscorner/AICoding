@@ -157,6 +157,18 @@ def make_entry(prompts: list[tuple[str, str, str, bool, str]], settings: dict, s
     }
 
 
+# Settings the removed Video → Extend tab wrote into every entry (empty on
+# image and text runs). Empty ones are ignored when comparing, so entries and
+# favorites saved by v2.x still match the same run made today.
+_RETIRED_SETTINGS = ("video_input_mode", "extend_stitch")
+
+
+def _comparable(settings):
+    if not isinstance(settings, dict):
+        return settings
+    return {k: v for k, v in settings.items() if not (k in _RETIRED_SETTINGS and v is None)}
+
+
 def _same_run(a: dict, b: dict) -> bool:
     """Same prompt and same settings. The source image is deliberately NOT
     part of this: running one prompt over five images is one history entry
@@ -164,7 +176,7 @@ def _same_run(a: dict, b: dict) -> bool:
     and it flooded the list). Which image made which file is kept per
     result in ``sources`` — see ``add_results``."""
     return (a.get("positive") == b.get("positive") and a.get("negative") == b.get("negative")
-            and a.get("settings") == b.get("settings"))
+            and _comparable(a.get("settings")) == _comparable(b.get("settings")))
 
 
 def append_entry(workflow_path: Path, entry: dict) -> int:
@@ -203,7 +215,7 @@ def entry_matches(a: dict, b: dict) -> bool:
     """
     return (a.get("timestamp") == b.get("timestamp")
             and a.get("positive") == b.get("positive")
-            and a.get("settings") == b.get("settings"))
+            and _comparable(a.get("settings")) == _comparable(b.get("settings")))
 
 
 def is_hidden(entry: dict) -> bool:
@@ -343,8 +355,6 @@ def describe_settings(settings: dict | None) -> str:
         val = length.get("value")
         bits.append(f"{length.get('label', 'Length')}: {val:g}" if isinstance(val, (int, float))
                     else f"{length.get('label', 'Length')}: {val}")
-    if settings.get("video_input_mode"):
-        bits.append(f"input {settings['video_input_mode']}")
     if settings.get("text_to_video"):
         bits.append("text → video")
     if settings.get("mode"):
@@ -415,8 +425,6 @@ def format_entry(e: dict, result: str | None = None) -> str:
         for l in s.get("loras", []):
             strengths = ", ".join(f"{k}={v:g}" for k, v in (l.get("strengths") or {}).items())
             lines.append(f"LoRA {l.get('label', '')}: {l.get('name', 'None')}  {strengths}")
-        if s.get("video_input_mode"):
-            lines.append(f"Video input: {s['video_input_mode']}   Append to source: {s.get('extend_stitch')}")
         if s.get("text_to_video"):
             lines.append("Text → Video (no source image or video)")
         lines.append("")

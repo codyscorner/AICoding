@@ -129,8 +129,9 @@ def browse_start(folder: str) -> str:
 
 
 def thumbnail_caches(path: Path, root: Path | None = None) -> list[Path]:
-    """Cached thumbnails belonging to `path`: `<stem>.jpg` / `<stem>_last.jpg`
-    for videos, `<stem>_<crc of the path relative to root>.jpg` for images."""
+    """Cached thumbnails belonging to `path`: `<stem>.jpg` for videos (plus the
+    `<stem>_last.jpg` that v2.x cached), `<stem>_<crc of the path relative to
+    root>.jpg` for images."""
     out: list[Path] = []
     folders = {path.parent / "thumbnails"}
     if root:
