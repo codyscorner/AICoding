@@ -13,7 +13,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QPixmap
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QGridLayout, QGroupBox, QHBoxLayout,
+    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QGridLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QProgressBar, QPushButton,
     QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTextEdit, QVBoxLayout, QWidget,
 )
@@ -22,21 +22,17 @@ from config import ConfigManager
 from run_worker import TEXT_STEM, RunRequest
 from ui.clone_dialog import CloneWorkflowDialog
 from ui.prompt_history import (
-    PromptExpandDialog, PromptHistoryDialog, add_results, append_entry, history_path,
+    PromptExpandDialog, PromptHistoryDialog, add_results, append_entry, find_or_append_entry, history_path,
     make_entry,
 )
+from scenes import ORDER_SEQUENTIAL, ORDER_SHUFFLE, SCENES_NAME, find_tags, get_library
+from ui.scenes_dialog import ScenesDialog
 from ui.styles import COLORS
 from ui.widgets import ElidedLabel, FilterComboBox, NoScrollComboBox
 from workflow_tools import (
     Analysis, LoraSlot, WorkflowError, analyze, apply_inputs, apply_megapixels, apply_steps,
     apply_value, blank_workflow, list_loras, list_workflows, load_workflow, save_workflow,
 )
-
-VIDEO_INPUT_MODES = [
-    ("auto", "Auto (video node if the workflow has one, else last frame)"),
-    ("last_frame", "Last frame → image input (LoadImage)"),
-    ("upload_video", "Upload whole video → video input (LoadVideo)"),
-]
 
 MAX_LOG_LINES = 600
 
@@ -122,7 +118,7 @@ class RunPanel(QWidget):
 
     def __init__(self, kind: str, config: ConfigManager, parent=None):
         super().__init__(parent)
-        self.kind = kind                    # "image" | "video" | "text"
+        self.kind = kind                    # "image" | "text"
         self._cfg = config
         # Set by MainWindow: given a RunRequest, returns a description of the
         # matching run already queued/running, or "" when it's not a repeat.
@@ -147,6 +143,15 @@ class RunPanel(QWidget):
         self._analysis: Analysis | None = None
         self._prompt_edits: list[tuple[object, QTextEdit]] = []        # (PromptField, editor)
         self._lora_rows: list[tuple[LoraSlot, QComboBox, dict[str, QDoubleSpinBox]]] = []
+        # Scene snippets: the {{tag}} markers in a prompt turn into each tag's
+        # current snippet when the run is built. One library shared by all tabs.
+        self._scenes = get_library(Path(config.config_path).parent / SCENES_NAME)
+        self._scene_rows: dict[str, tuple] = {}        # tag -> (label, prev, combo, next, count, add_btn)
+        self._scene_timer = QTimer(self)
+        self._scene_timer.setSingleShot(True)
+        self._scene_timer.setInterval(150)
+        self._scene_timer.timeout.connect(self._refresh_scenes)
+        self._scenes.add_listener(self._scene_timer.start)
         self._lora_thread: _LoraFetchThread | None = None
         self._lora_folder_info = ""
         self._lora_server_info = ""
@@ -190,15 +195,12 @@ class RunPanel(QWidget):
                                    "original stays exactly as it is")
         self._clone_btn.clicked.connect(self._clone_workflow)
         row.addWidget(self._clone_btn)
-        # Blank workflows exist for the two "create from scratch" tabs only;
-        # Extend always starts from an existing video's workflow.
-        if kind in ("image", "text"):
-            self._new_btn = QPushButton("✚ New")
-            self._new_btn.setObjectName("secondary_btn")
-            self._new_btn.setToolTip("Create a new workflow from the blank template picked in "
-                                     "Settings → Prompts, with every prompt empty and every LoRA off")
-            self._new_btn.clicked.connect(self._new_blank_workflow)
-            row.addWidget(self._new_btn)
+        self._new_btn = QPushButton("✚ New")
+        self._new_btn.setObjectName("secondary_btn")
+        self._new_btn.setToolTip("Create a new workflow from the blank template picked in "
+                                 "Settings → Prompts, with every prompt empty and every LoRA off")
+        self._new_btn.clicked.connect(self._new_blank_workflow)
+        row.addWidget(self._new_btn)
         wf_layout.addLayout(row)
         self._wf_status = QLabel("")
         self._wf_status.setObjectName("status_dim")
@@ -245,6 +247,43 @@ class RunPanel(QWidget):
         pg.addLayout(rewrite_row)
         self._rewriter_chk.setVisible(False)
 
+        # Scenes: one row per {{tag}} found in the prompt (◀ scene ▶), then the
+        # options row and a one-line preview of the prompt as it will be sent.
+        self._scene_widget = QWidget()
+        sw = QVBoxLayout(self._scene_widget)
+        sw.setContentsMargins(0, 0, 0, 0)
+        sw.setSpacing(3)
+        self._scene_rows_box = QVBoxLayout()
+        self._scene_rows_box.setSpacing(3)
+        sw.addLayout(self._scene_rows_box)
+        opts = QHBoxLayout()
+        opts.setSpacing(6)
+        self._scene_advance = QCheckBox("Next scene after Create")
+        self._scene_advance.setToolTip(
+            "After a run is queued, mark the scene used and move every tag to its next unused scene")
+        self._scene_advance.setChecked(self._scenes.auto_advance)
+        self._scene_advance.toggled.connect(lambda on: self._scenes.set_options(auto_advance=on))
+        opts.addWidget(self._scene_advance)
+        self._scene_order = NoScrollComboBox()
+        self._scene_order.addItems(["In order", "Shuffle (no repeats)"])
+        self._scene_order.setToolTip("How the next scene is chosen: the next one in the list, or a random unused one")
+        self._scene_order.setCurrentIndex(1 if self._scenes.order == ORDER_SHUFFLE else 0)
+        self._scene_order.currentIndexChanged.connect(
+            lambda i: self._scenes.set_options(order=ORDER_SHUFFLE if i == 1 else ORDER_SEQUENTIAL))
+        opts.addWidget(self._scene_order)
+        self._scene_reset = QPushButton("↺ Reset used")
+        self._scene_reset.setObjectName("small_btn")
+        self._scene_reset.setToolTip("Clear the ✓ marks so every scene counts as unused again")
+        self._scene_reset.clicked.connect(lambda: self._scenes.reset_used())
+        opts.addWidget(self._scene_reset)
+        opts.addStretch()
+        sw.addLayout(opts)
+        self._scene_preview = ElidedLabel("")
+        self._scene_preview.setObjectName("status_dim")
+        sw.addWidget(self._scene_preview)
+        pg.addWidget(self._scene_widget)
+        self._scene_widget.setVisible(False)
+
         prow = QHBoxLayout()
         prow.addWidget(QLabel("Text size:"))
         self._font_spin = QSpinBox()
@@ -254,6 +293,11 @@ class RunPanel(QWidget):
         self._font_spin.valueChanged.connect(self._apply_font_size)
         prow.addWidget(self._font_spin)
         prow.addStretch()
+        manage = QPushButton("🎬 Scenes…")
+        manage.setObjectName("secondary_btn")
+        manage.setToolTip("Add, edit, import and reset the scene snippets that fill {{tag}} markers in the prompt")
+        manage.clicked.connect(lambda: self._open_scenes(""))
+        prow.addWidget(manage)
         self._history_btn = QPushButton("📜 History")
         self._history_btn.setObjectName("secondary_btn")
         self._history_btn.setToolTip("Every run is recorded with its prompt, LoRAs, seed and length — search and reload them here")
@@ -326,8 +370,7 @@ class RunPanel(QWidget):
         self._mp_spin.setSingleStep(0.05)
         self._mp_spin.setFixedWidth(84)
         self._mp_spin.setToolTip(
-            "Output size in megapixels — smaller for quick tests, larger for production.\n"
-            "Ignored while 'Append the new clip' is ticked: the source video's size wins.")
+            "Output size in megapixels — smaller for quick tests, larger for production.")
         self._mp_spin.valueChanged.connect(lambda _v: self._update_summary())
         size_row.addWidget(self._mp_spin)
         size_row.addStretch()
@@ -357,33 +400,6 @@ class RunPanel(QWidget):
 
         self._on_seed_mode()
 
-        if kind == "video":
-            mode_row = QHBoxLayout()
-            mode_row.addWidget(QLabel("Video input:"))
-            self._input_mode = NoScrollComboBox()
-            for key, label in VIDEO_INPUT_MODES:
-                self._input_mode.addItem(label, key)
-            current = config.get("video_input_mode", "auto")
-            for i, (key, _) in enumerate(VIDEO_INPUT_MODES):
-                if key == current:
-                    self._input_mode.setCurrentIndex(i)
-            self._input_mode.currentIndexChanged.connect(
-                lambda _i: self._cfg.set("video_input_mode", self._input_mode.currentData()))
-            mode_row.addWidget(self._input_mode, stretch=1)
-            og.addLayout(mode_row)
-            self._stitch_chk = QCheckBox(
-                "Append the new clip to the source video "
-                "(matches the source's frame size, saves <name>_extended.mp4 as well)")
-            self._stitch_chk.setToolTip(
-                "The new clip is generated at the source video's own resolution so the two join "
-                "cleanly, and the joined file is written alongside the clip.")
-            self._stitch_chk.setChecked(bool(config.get("extend_stitch", True)))
-            self._stitch_chk.toggled.connect(lambda v: self._cfg.set("extend_stitch", bool(v)))
-            self._stitch_chk.toggled.connect(lambda _v: self._update_summary())
-            og.addWidget(self._stitch_chk)
-        else:
-            self._input_mode = None
-            self._stitch_chk = None
         ll.addWidget(opt_group)
 
         # ── LoRAs ───────────────────────────────────────────────────────
@@ -430,7 +446,7 @@ class RunPanel(QWidget):
         self._source_thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._source_thumb.setVisible(False)
         run_row.addWidget(self._source_thumb)
-        self._source_lbl = QLabel("No image selected" if kind == "image" else "No video selected")
+        self._source_lbl = QLabel("No image selected")
         self._source_lbl.setObjectName("status_dim")
         self._source_lbl.setWordWrap(True)
         run_row.addWidget(self._source_lbl, stretch=1)
@@ -452,7 +468,7 @@ class RunPanel(QWidget):
             run_row.addWidget(self._name_edit, stretch=1)
         else:
             self._name_edit = None
-        self._run_btn = QPushButton("▶  Extend Video" if kind == "video" else "▶  Create Video")
+        self._run_btn = QPushButton("▶  Create Video")
         self._run_btn.setObjectName("run_btn")
         self._run_btn.clicked.connect(self._on_run)
         run_row.addWidget(self._run_btn)
@@ -582,7 +598,7 @@ class RunPanel(QWidget):
     # ------------------------------------------------------------------ #
 
     def _config_key(self) -> str:
-        return {"image": "image_workflow", "video": "video_workflow", "text": "text_workflow"}[self.kind]
+        return {"image": "image_workflow", "text": "text_workflow"}[self.kind]
 
     def reload_workflows(self):
         wf_dir = Path((self._cfg.get("workflow_dir", "") or "").strip())
@@ -665,12 +681,10 @@ class RunPanel(QWidget):
         problems = []
         if self.kind == "image" and not a.accepts_image:
             problems.append("no image input node (LoadImage) — pick an image-to-video workflow")
-        if self.kind == "video" and not (a.accepts_image or a.accepts_video):
-            problems.append("no video or image input node")
         if self.kind == "text":
             if a.accepts_image or a.accepts_video:
                 problems.append("takes an image/video input — this tab runs prompt-only workflows "
-                                "(no LoadImage / LoadVideo node); use Image → Video or Video → Extend for it")
+                                "(no LoadImage / LoadVideo node); use Image → Video for it")
             elif not a.prompts:
                 problems.append("no prompt text to edit — nothing to generate from")
         if not a.output_nodes:
@@ -722,9 +736,11 @@ class RunPanel(QWidget):
                     edit = self._negative_row(pf)
                 else:
                     edit = self._positive_editor(pf)
+                edit.textChanged.connect(self._scene_timer.start)
                 self._prompt_edits.append((pf, edit))
             if all(pf.negative for pf in a.prompts):
                 self._prompt_box.addStretch()
+        self._refresh_scenes()
         self._apply_font_size(self._font_spin.value())
         self._update_rewriter_visibility()
 
@@ -873,12 +889,17 @@ class RunPanel(QWidget):
         lbl.setStyleSheet(f"color: {COLORS['fg_secondary']}; font-weight: bold;")
         head.addWidget(lbl)
         head.addStretch()
+        paste = QPushButton("📋 Paste from Clipboard")
+        paste.setObjectName("small_btn")
+        paste.setToolTip("Replace this whole prompt with the text on the clipboard")
+        head.addWidget(paste)
         expand = QPushButton("⤢ Expand")
         expand.setObjectName("small_btn")
         expand.setToolTip("Edit this prompt in a large separate window")
         head.addWidget(expand)
         self._prompt_box.addLayout(head)
         edit = self._hidden_editor(pf)
+        paste.clicked.connect(lambda _c, e=edit: self._paste_prompt(e))
         edit.setVisible(True)
         edit.setMinimumHeight(POSITIVE_PROMPT_MIN_H)
         edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -909,6 +930,14 @@ class RunPanel(QWidget):
         edit_btn.clicked.connect(lambda _c, e=edit, t=pf.label: self._expand_prompt(e, t))
         return edit
 
+    def _paste_prompt(self, edit: QTextEdit):
+        """Replace the whole prompt with the clipboard text (no select-all needed)."""
+        text = QApplication.clipboard().text()
+        if not text.strip():
+            QMessageBox.information(self, "Clipboard is empty", "There is no text on the clipboard to paste.")
+            return
+        edit.setPlainText(text)
+
     def _expand_prompt(self, edit: QTextEdit, title: str):
         dlg = PromptExpandDialog(title, edit.toPlainText(), edit.font(), self)
         if dlg.exec() == PromptExpandDialog.DialogCode.Accepted:
@@ -924,10 +953,113 @@ class RunPanel(QWidget):
             edit.setStyleSheet(f"QTextEdit {{ font-size: {int(size)}pt; }}")
 
     def _prompt_overrides(self) -> dict[tuple[str, str], str]:
-        return {(pf.node_id, pf.key): edit.toPlainText() for pf, edit in self._prompt_edits}
+        return {(pf.node_id, pf.key): self._scenes.render(edit.toPlainText())[0] for pf, edit in self._prompt_edits}
 
     def _prompt_tuples(self) -> list[tuple[str, str, str, bool, str]]:
-        return [(pf.node_id, pf.key, pf.label, pf.negative, edit.toPlainText()) for pf, edit in self._prompt_edits]
+        return [(pf.node_id, pf.key, pf.label, pf.negative, self._scenes.render(edit.toPlainText())[0])
+                for pf, edit in self._prompt_edits]
+
+    # ------------------------------------------------------------------ #
+    # Scenes ({{tag}} snippets)
+    # ------------------------------------------------------------------ #
+
+    def _template_tags(self) -> list[str]:
+        """Every {{tag}} used by any prompt on this panel, first-seen order."""
+        seen: dict[str, None] = {}
+        for _pf, edit in self._prompt_edits:
+            for t in find_tags(edit.toPlainText()):
+                seen.setdefault(t, None)
+        return list(seen)
+
+    def _unresolved_tags(self) -> list[str]:
+        """Tags in the prompts that have no scene to fill them (they would be sent as literal {{tag}})."""
+        out: dict[str, None] = {}
+        for _pf, edit in self._prompt_edits:
+            for t in self._scenes.render(edit.toPlainText())[1]:
+                out.setdefault(t, None)
+        return list(out)
+
+    def _open_scenes(self, tag: str):
+        if tag and not self._scenes.has(tag):
+            self._scenes.add_tag(tag)
+        ScenesDialog(self._scenes, tag, self).exec()
+        self._refresh_scenes()
+
+    def _refresh_scenes(self):
+        """Bring the Scenes strip in line with the prompt text and the library."""
+        lib = self._scenes
+        tags = self._template_tags()
+        has_prompt = any(not pf.negative for pf, _e in self._prompt_edits)
+        # Nothing to show until the prompt has a {{tag}}; the 🎬 Scenes… button
+        # lives on the History / Reload / Save row, so no extra line appears.
+        self._scene_widget.setVisible(has_prompt and bool(tags))
+        if not (has_prompt and tags):
+            return
+        # keep the option widgets in step with changes made on another tab
+        for w, apply in ((self._scene_advance, lambda: self._scene_advance.setChecked(lib.auto_advance)),
+                         (self._scene_order, lambda: self._scene_order.setCurrentIndex(
+                             1 if lib.order == ORDER_SHUFFLE else 0))):
+            w.blockSignals(True)
+            apply()
+            w.blockSignals(False)
+        self._scene_advance.setVisible(bool(tags))
+        self._scene_order.setVisible(bool(tags))
+        self._scene_reset.setVisible(bool(tags))
+
+        if list(self._scene_rows) != tags:
+            self._clear_layout(self._scene_rows_box)
+            self._scene_rows = {}
+            for tag in tags:
+                row = QHBoxLayout()
+                row.setSpacing(4)
+                label = QLabel(f"{{{{{tag}}}}}")
+                label.setMinimumWidth(110)
+                prev = QPushButton("◀")
+                prev.setObjectName("small_btn")
+                prev.setFixedWidth(34)
+                prev.setToolTip("Previous scene")
+                prev.clicked.connect(lambda _c, t=tag: lib.step(t, -1))
+                combo = NoScrollComboBox()
+                combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+                combo.setMinimumWidth(200)
+                combo.activated.connect(lambda i, t=tag: lib.set_current(t, i))
+                nxt = QPushButton("▶")
+                nxt.setObjectName("small_btn")
+                nxt.setFixedWidth(34)
+                nxt.setToolTip("Next scene")
+                nxt.clicked.connect(lambda _c, t=tag: lib.step(t, 1))
+                count = QLabel("")
+                count.setObjectName("status_dim")
+                add = QPushButton("＋ Add scenes…")
+                add.setObjectName("secondary_btn")
+                add.clicked.connect(lambda _c, t=tag: self._open_scenes(t))
+                for w in (label, prev, combo, nxt, count, add):
+                    row.addWidget(w, stretch=1 if w is combo else 0)
+                self._scene_rows_box.addLayout(row)
+                self._scene_rows[tag] = (label, prev, combo, nxt, count, add)
+        for tag, (label, prev, combo, nxt, count, add) in self._scene_rows.items():
+            snippets = lib.snippets(tag)
+            have = bool(snippets)
+            combo.blockSignals(True)
+            combo.clear()
+            for i, s in enumerate(snippets):
+                text = s["name"] or " ".join(s["text"].split())[:70]
+                combo.addItem(f"{'✓ ' if lib.is_used(tag, s['id']) else ''}{i + 1}. {text}")
+            combo.setCurrentIndex(lib.current_index(tag))
+            combo.blockSignals(False)
+            for w in (prev, combo, nxt, count):
+                w.setVisible(have)
+            add.setVisible(not have)
+            label.setStyleSheet("" if have else f"color: {COLORS['error']}; font-weight: bold;")
+            n = len(snippets)
+            count.setText(f"{lib.current_index(tag) + 1} / {n}   ({lib.used_count(tag)} used)")
+        full = ""
+        for pf, edit in self._prompt_edits:
+            if not pf.negative and edit.toPlainText().strip():
+                full = self._scenes.render(edit.toPlainText())[0].strip()
+                break
+        self._scene_preview.setVisible(bool(tags))
+        self._scene_preview.setFullText(("Sends: " + " ".join(full.split())) if full else "")
 
     def _write_panel_edits(self, path: Path):
         """Write the prompts, LoRAs, steps, megapixels and length shown here into `path`."""
@@ -1325,10 +1457,7 @@ class RunPanel(QWidget):
             "steps": int(self._steps_spin.value()) if (self._analysis is not None and self._analysis.steps_fields) else None,
             "megapixels": float(self._mp_spin.value()) if (self._analysis is not None and self._analysis.mp_fields) else None,
             "loras": self._lora_records(),
-            "video_input_mode": self._input_mode.currentData() if self._input_mode is not None else None,
-            "extend_stitch": bool(self._stitch_chk.isChecked()) if self._stitch_chk is not None else None,
-            # Library → Reuse Settings tells the tabs apart by these keys: a
-            # video_input_mode means Extend, text_to_video means this tab.
+            # Library → Reuse Settings tells the two run tabs apart by this key.
             "text_to_video": self.kind == "text",
         }
 
@@ -1352,27 +1481,16 @@ class RunPanel(QWidget):
         if self._analysis is not None and self._analysis.steps_fields:
             bits.append(f"Steps: {int(self._steps_spin.value())}")
         if self._analysis is not None and self._analysis.mp_fields:
-            if self._stitch_chk is not None and self._stitch_chk.isChecked():
-                bits.append("MP: source video's size")
-            else:
-                bits.append(f"MP: {self._mp_spin.value():g}")
+            bits.append(f"MP: {self._mp_spin.value():g}")
         if self._length_spin.isVisible() or (self._analysis and self._analysis.length_field):
             bits.append(f"{self._length_lbl.text().rstrip(':')}: {self._length_spin.value():g}")
         return bits
 
     def _start_frame_path(self, source: Path | None = None) -> Path | None:
-        """The frame this run actually starts from, for the queue view. An
-        image source is that frame; a video source starts from its LAST frame,
-        which the Extend grid has already extracted and cached for the tile
-        it's showing — reused here rather than shelling out to ffmpeg on a
-        button click. Missing cache just means no preview, never a stall."""
+        """The image this run starts from, for the queue view (None for a
+        text-to-video run)."""
         source = source or self._source
-        if source is None:
-            return None
-        if self.kind == "image":
-            return source if source.exists() else None
-        cached = source.parent / "thumbnails" / (source.stem + "_last.jpg")
-        return cached if cached.exists() else None
+        return source if source is not None and source.exists() else None
 
     def _positive_prompt_preview(self) -> str:
         """First non-empty positive prompt — enough to tell two queued runs
@@ -1380,7 +1498,7 @@ class RunPanel(QWidget):
         for pf, edit in self._prompt_edits:
             if pf.negative:
                 continue
-            text = edit.toPlainText().strip()
+            text = self._scenes.render(edit.toPlainText())[0].strip()
             if text:
                 return text
         return ""
@@ -1398,26 +1516,25 @@ class RunPanel(QWidget):
         self.set_source(sources[0] if sources else None)
         self._sources = sources         # after set_source, which resets it to the one file
         n = len(self._sources)
-        noun = "image" if self.kind == "image" else "video"
         if n > 1:
             names = ", ".join(p.name for p in self._sources[:4]) + (", …" if n > 4 else "")
-            self._source_lbl.setText(f"Selected: {n} {noun}s — {names}   (one run each, in this order)")
-            self._run_btn.setText(f"▶  {'Extend' if self.kind == 'video' else 'Create'} {n} Videos")
+            self._source_lbl.setText(f"Selected: {n} images — {names}   (one run each, in this order)")
+            self._run_btn.setText(f"▶  Create {n} Videos")
         else:
-            self._run_btn.setText("▶  Extend Video" if self.kind == "video" else "▶  Create Video")
+            self._run_btn.setText("▶  Create Video")
 
     def set_source(self, path: Path | None):
-        # A single source set directly (Send to Extend, Reuse Settings) must
-        # not leave an older multi-selection behind for Create to queue.
+        # A single source set directly (Reuse Settings) must not leave an
+        # older multi-selection behind for Create to queue.
         self._sources = [path] if path is not None else []
-        self._run_btn.setText("▶  Extend Video" if self.kind == "video" else "▶  Create Video")
+        self._run_btn.setText("▶  Create Video")
         self._source = path
         if path is None:
-            self._source_lbl.setText("No image selected" if self.kind == "image" else "No video selected")
+            self._source_lbl.setText("No image selected")
             self._source_thumb.setVisible(False)
         else:
             self._source_lbl.setText(f"Selected: {path.name}")
-            pix = QPixmap(str(path)) if self.kind == "image" else QPixmap()
+            pix = QPixmap(str(path))
             if not pix.isNull():
                 self._source_thumb.setPixmap(pix.scaled(
                     48, 48, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
@@ -1436,14 +1553,26 @@ class RunPanel(QWidget):
             ok = self._source is not None
         if ok and self.kind == "image":
             ok = self._analysis.accepts_image
-        if ok and self.kind == "video":
-            ok = self._analysis.accepts_image or self._analysis.accepts_video
         self._run_btn.setEnabled(bool(ok))
+
+    def queue_from_shortcut(self):
+        """Space in the thumbnail grid: same as clicking the run button,
+        but only when that button would be enabled."""
+        if self._run_btn.isEnabled():
+            self._on_run()
 
     def _on_run(self):
         if self._workflow_path is None or self._analysis is None:
             return
         if self._source is None and self.kind != "text":
+            return
+        missing = self._unresolved_tags()
+        if missing:
+            QMessageBox.warning(
+                self, "Scene missing",
+                "These {{tags}} in the prompt have no scenes, so they would be sent as literal text:\n\n"
+                + "\n".join(f"  {{{{{t}}}}}" for t in missing)
+                + "\n\nAdd scenes with 🎬 Scenes…, or take the marker out of the prompt.")
             return
         sources = self._sources if len(self._sources) > 1 else [self._source]
         queued = 0
@@ -1451,8 +1580,19 @@ class RunPanel(QWidget):
             if self._queue_one(source):
                 queued += 1
         if len(sources) > 1:
-            noun = "images" if self.kind == "image" else "videos"
-            self.append_log(f"Queued {queued} of {len(sources)} selected {noun} as separate runs")
+            self.append_log(f"Queued {queued} of {len(sources)} selected images as separate runs")
+        tags = [t for t in self._template_tags() if self._scenes.has(t)]
+        if queued and tags and self._scenes.auto_advance:
+            exhausted = self._scenes.advance(tags)
+            if exhausted:
+                self.append_log("Scenes: every scene for " + ", ".join(f"{{{{{t}}}}}" for t in exhausted)
+                                + " has now been used (staying on the last one — ↺ Reset used to start over)")
+                QMessageBox.information(
+                    self, "All scenes used",
+                    "Every scene for " + ", ".join(f"{{{{{t}}}}}" for t in exhausted)
+                    + " has now been used.\n\nIt stays on the last scene. Press ↺ Reset used to start over.")
+            else:
+                self.append_log("Scenes: moved to the next scene for " + ", ".join(f"{{{{{t}}}}}" for t in tags))
 
     def _queue_one(self, source: Path | None) -> bool:
         """Build, guard, record and emit one run for one source. Returns
@@ -1473,8 +1613,6 @@ class RunPanel(QWidget):
             length_value=float(self._length_spin.value()) if fld is not None else None,
             steps=int(self._steps_spin.value()) if self._analysis.steps_fields else None,
             megapixels=float(self._mp_spin.value()) if self._analysis.mp_fields else None,
-            video_input_mode=self._input_mode.currentData() if self._input_mode is not None else "auto",
-            extend_stitch=bool(self._stitch_chk.isChecked()) if self._stitch_chk is not None else False,
             turbo_enabled=bool(self._turbo_chk.isChecked()) if self._analysis.turbo is not None else None,
             output_dir_override=self._reused_output_dir,
             prompt_preview=self._positive_prompt_preview(),
@@ -1489,14 +1627,17 @@ class RunPanel(QWidget):
         # request itself (not on self) so queuing several runs in a row -
         # each with its own workflow/prompt snapshot - can't cross-attach
         # one run's results to another's history entry.
-        if not self._history_recording_suppressed:
-            try:
-                req.history_index = append_entry(
-                    self._workflow_path,
-                    make_entry(self._prompt_tuples(), self._collect_settings(),
-                               source.name if source else ""))
-            except Exception:  # noqa: BLE001
-                req.history_index = None
+        # A suppressed (Reuse Settings) run still has to record WHICH source made
+        # its video, or the pickers never learn that source is finished — it
+        # joins the entry it was reused from instead of adding a new row.
+        record = find_or_append_entry if self._history_recording_suppressed else append_entry
+        try:
+            req.history_index = record(
+                self._workflow_path,
+                make_entry(self._prompt_tuples(), self._collect_settings(),
+                           source.name if source else ""))
+        except Exception:  # noqa: BLE001
+            req.history_index = None
         self.run_requested.emit(req)
         return True
 
@@ -1539,6 +1680,16 @@ Queue it anyway?""",
                 text += f"  —  next: {next_up}"
             self._queue_lbl.setText(text)
             self._queue_lbl.setToolTip(tooltip)
+
+    def show_preparing(self, message: str):
+        """Immediate feedback between clicking Run and the job actually
+        starting (RunPod model check can take a minute or two): drop the
+        yellow DONE bar to a busy indicator and say what is happening."""
+        self._progress.setStyleSheet("")
+        self._progress.setRange(0, 0)
+        self._progress.setFormat("")
+        self._progress_lbl.setText(message)
+        self.append_log(message)
 
     def set_running(self, running: bool, active: bool = True):
         """running: a job is in progress somewhere; active: this panel owns it."""

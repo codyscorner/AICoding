@@ -1,8 +1,8 @@
 """Portable config for ComfyUI Video Creator.
 
 The settings file lives next to the EXE (or next to main.py when run from
-source) — never in %APPDATA% — because every VibeCoded app is a portable
-single-file EXE that must work from a thumb drive.
+source) — never in %APPDATA% — because the app is portable: its whole folder
+(EXE, _internal and settings) must work from a thumb drive.
 """
 
 import json
@@ -41,7 +41,6 @@ class ConfigManager:
         "alert_sound_enabled": True,
         # Folders
         "image_dir": "",
-        "video_dir": "",
         "workflow_dir": "P:/AI/ComfyLocal/ComfyUI_windows_portable/Workflow_API",
         "output_dir": "",
         "library_dir": "",                     # blank = output_dir
@@ -73,22 +72,16 @@ class ConfigManager:
         "ffmpeg_path": "",
         # Remembered UI state
         "image_workflow": "",
-        "video_workflow": "",
         "text_workflow": "",
         # "✚ New" copies these (relative to workflow_dir) with prompts + LoRAs cleared
         "image_blank_template": "",
         "text_blank_template": "",
         "text_output_name": "",                # Text → Video: base name for the saved clip (blank = T2V)
         "image_sort": "Name A→Z",
-        "video_sort": "Newest First",
-        "video_input_mode": "auto",            # auto | last_frame | upload_video
-        "extend_stitch": True,
-        "extend_hide_clips": True,             # Extend list hides a short clip once its complete video exists
         "seed_mode": "random",                 # random | fixed
         "seed_value": 0,
         "prompt_font_size": 10,
         "panel_split_image": [],
-        "panel_split_video": [],
         "panel_split_text": [],
         # AI prompt rewriter (local LLM via LM Studio's OpenAI-compatible API)
         "rewriter_base_url": "http://127.0.0.1:1970/v1",

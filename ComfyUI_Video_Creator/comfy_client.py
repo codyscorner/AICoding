@@ -21,7 +21,6 @@ class ComfyClient:
         self.url = base_url.rstrip("/")
         self.client_id = str(uuid.uuid4())
         self._log = log or (lambda _m: None)
-        self._options: dict[str, list[str]] = {}
 
     # ------------------------------------------------------------------ #
     # Basic calls
@@ -83,27 +82,6 @@ class ComfyClient:
         info = r.json().get("LoraLoaderModelOnly", {})
         opts = (info.get("input", {}).get("required", {}).get("lora_name") or [[]])[0]
         return [str(x) for x in opts] if isinstance(opts, list) else []
-
-    def list_options(self, node_class: str, input_name: str) -> list[str]:
-        """The values this server's <node_class> accepts for a combo input
-        (e.g. VHS_VideoCombine.format). [] when the server can't be asked."""
-        key = f"{node_class}.{input_name}"
-        if key in self._options:
-            return self._options[key]
-        opts: list[str] = []
-        try:
-            r = requests.get(f"{self.url}/object_info/{node_class}", timeout=20)
-            if r.status_code == 200:
-                spec = (r.json().get(node_class, {}).get("input") or {})
-                for section in ("required", "optional"):
-                    entry = (spec.get(section) or {}).get(input_name)
-                    if isinstance(entry, list) and entry and isinstance(entry[0], list):
-                        opts = [str(x) for x in entry[0]]
-                        break
-        except (requests.RequestException, ValueError, AttributeError):
-            opts = []
-        self._options[key] = opts
-        return opts
 
     def history(self, prompt_id: str) -> dict:
         r = requests.get(f"{self.url}/history/{prompt_id}", timeout=20)

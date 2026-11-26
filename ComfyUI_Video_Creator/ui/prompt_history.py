@@ -157,6 +157,18 @@ def make_entry(prompts: list[tuple[str, str, str, bool, str]], settings: dict, s
     }
 
 
+# Settings the removed Video → Extend tab wrote into every entry (empty on
+# image and text runs). Empty ones are ignored when comparing, so entries and
+# favorites saved by v2.x still match the same run made today.
+_RETIRED_SETTINGS = ("video_input_mode", "extend_stitch")
+
+
+def _comparable(settings):
+    if not isinstance(settings, dict):
+        return settings
+    return {k: v for k, v in settings.items() if not (k in _RETIRED_SETTINGS and v is None)}
+
+
 def _same_run(a: dict, b: dict) -> bool:
     """Same prompt and same settings. The source image is deliberately NOT
     part of this: running one prompt over five images is one history entry
@@ -164,7 +176,7 @@ def _same_run(a: dict, b: dict) -> bool:
     and it flooded the list). Which image made which file is kept per
     result in ``sources`` — see ``add_results``."""
     return (a.get("positive") == b.get("positive") and a.get("negative") == b.get("negative")
-            and a.get("settings") == b.get("settings"))
+            and _comparable(a.get("settings")) == _comparable(b.get("settings")))
 
 
 def append_entry(workflow_path: Path, entry: dict) -> int:
@@ -173,6 +185,20 @@ def append_entry(workflow_path: Path, entry: dict) -> int:
     entries = load_history(workflow_path)
     if entries and _same_run(entries[-1], entry):
         return len(entries) - 1
+    entries.append(entry)
+    save_history(workflow_path, entries)
+    return len(entries) - 1
+
+
+def find_or_append_entry(workflow_path: Path, entry: dict) -> int:
+    """Index of the entry with this prompt + settings, anywhere in the history;
+    appended only when none exists. Used for runs started from Reuse Settings,
+    which must not add a fresh "attempt" row each time but whose result still
+    has to be recorded so the Library knows which source it came from."""
+    entries = load_history(workflow_path)
+    for i in range(len(entries) - 1, -1, -1):
+        if _same_run(entries[i], entry):
+            return i
     entries.append(entry)
     save_history(workflow_path, entries)
     return len(entries) - 1
@@ -189,7 +215,7 @@ def entry_matches(a: dict, b: dict) -> bool:
     """
     return (a.get("timestamp") == b.get("timestamp")
             and a.get("positive") == b.get("positive")
-            and a.get("settings") == b.get("settings"))
+            and _comparable(a.get("settings")) == _comparable(b.get("settings")))
 
 
 def is_hidden(entry: dict) -> bool:
@@ -250,7 +276,9 @@ def add_results(workflow_path: Path, index: int, results: list[str],
     ``sampler_seconds``), so older entries simply lack them. ``source`` is
     the image/video this particular run started from; it is stored per
     result file in ``sources`` so one entry can hold runs over several
-    images and the Library still shows the right one for each file."""
+    images and the Library still shows the right one for each file. A
+    ``seed`` key in ``timing`` is the seed the run actually used and is
+    stored the same way, in ``seeds`` (v2.21.2)."""
     entries = load_history(workflow_path)
     if 0 <= index < len(entries):
         existing = entries[index].setdefault("results", [])
@@ -261,6 +289,13 @@ def add_results(workflow_path: Path, index: int, results: list[str],
             sources = entries[index].setdefault("sources", {})
             for r in results:
                 sources[r] = source
+        if timing and isinstance(timing.get("seed"), int):
+            # The seed this run really used, per file. ``settings.seed`` stays
+            # as chosen (None = random) so runs of one prompt still share an
+            # entry; this is what tells you which number a random run got.
+            seeds = entries[index].setdefault("seeds", {})
+            for r in results:
+                seeds[r] = timing["seed"]
         for key in ("run_seconds", "render_seconds", "sampler_steps", "step_seconds", "sampler_seconds"):
             if timing and timing.get(key) is not None:
                 entries[index][key] = timing[key]
@@ -320,8 +355,6 @@ def describe_settings(settings: dict | None) -> str:
         val = length.get("value")
         bits.append(f"{length.get('label', 'Length')}: {val:g}" if isinstance(val, (int, float))
                     else f"{length.get('label', 'Length')}: {val}")
-    if settings.get("video_input_mode"):
-        bits.append(f"input {settings['video_input_mode']}")
     if settings.get("text_to_video"):
         bits.append("text → video")
     if settings.get("mode"):
@@ -333,6 +366,17 @@ def source_for_result(e: dict, result: str) -> str:
     """The image/video that made ``result``: the per-file record first,
     then the entry-level source older sidecars (pre-v2.6.1) wrote."""
     return ((e.get("sources") or {}).get(result) or e.get("source") or "") if result else ""
+
+
+def seed_for_result(e: dict, result: str | None) -> int | None:
+    """The seed that actually made ``result``: the per-file record when the
+    run stored one (v2.21.2+), else the entry's fixed seed, else None (a
+    random run from before seeds were recorded)."""
+    used = (e.get("seeds") or {}).get(result) if result else None
+    if isinstance(used, int):
+        return used
+    fixed = (e.get("settings") or {}).get("seed")
+    return fixed if isinstance(fixed, int) else None
 
 
 def format_entry(e: dict, result: str | None = None) -> str:
@@ -363,7 +407,13 @@ def format_entry(e: dict, result: str | None = None) -> str:
         lines.append("── Settings ──")
         lines.append(f"Workflow: {s.get('workflow', '?')}   Mode: {s.get('mode', '?')}")
         seed = s.get("seed")
-        lines.append(f"Seed: {seed if seed is not None else 'random'}")
+        used = seed_for_result(e, result)
+        if seed is not None:
+            lines.append(f"Seed: {seed}")
+        elif used is not None:
+            lines.append(f"Seed: {used}   (random — this is the one this file got)")
+        else:
+            lines.append("Seed: random")
         if s.get("steps") is not None:
             lines.append(f"Steps: {s['steps']}")
         if s.get("megapixels") is not None:
@@ -375,14 +425,13 @@ def format_entry(e: dict, result: str | None = None) -> str:
         for l in s.get("loras", []):
             strengths = ", ".join(f"{k}={v:g}" for k, v in (l.get("strengths") or {}).items())
             lines.append(f"LoRA {l.get('label', '')}: {l.get('name', 'None')}  {strengths}")
-        if s.get("video_input_mode"):
-            lines.append(f"Video input: {s['video_input_mode']}   Append to source: {s.get('extend_stitch')}")
         if s.get("text_to_video"):
             lines.append("Text → Video (no source image or video)")
         lines.append("")
     if e.get("results"):
         lines.append("── Results ──")
-        lines += e["results"]
+        seeds = e.get("seeds") or {}
+        lines += [f"{r}   (seed {seeds[r]})" if isinstance(seeds.get(r), int) else r for r in e["results"]]
     return "\n".join(lines)
 
 
@@ -771,7 +820,8 @@ class PromptHistoryDialog(QDialog):
     def _entry_text(rel: str, e: dict) -> str:
         parts = [rel, e.get("positive", ""), e.get("negative", ""), describe_settings(e.get("settings")),
                  " ".join(e.get("results", []) or []), e.get("source", "") or "",
-                 " ".join((e.get("sources") or {}).values())]
+                 " ".join((e.get("sources") or {}).values()),
+                 " ".join(f"seed {v}" for v in (e.get("seeds") or {}).values())]
         for p in (e.get("prompts") or {}).values():
             parts.append(p.get("text", ""))
         return "\n".join(parts).lower()

@@ -1,6 +1,6 @@
-"""Background thread that runs ONE workflow against ONE source (an image, a
-video, or nothing but the prompt for text-to-video) on the configured
-ComfyUI server and downloads the result."""
+"""Background thread that runs ONE workflow against ONE source (an image, or
+nothing but the prompt for text-to-video) on the configured ComfyUI server
+and downloads the result."""
 
 from __future__ import annotations
 
@@ -16,13 +16,11 @@ from pathlib import Path
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from comfy_client import ComfyClient
-from media_tools import concat_videos, extract_last_frame, probe, resolve_ffmpeg
 from remote_cleanup import OutputCleaner, enabled as cleanup_enabled
 from workflow_folders import library_dir_for, workflow_rel_of
 from workflow_tools import (
-    ValueField, analyze, apply_inputs, apply_megapixels, apply_output_format, apply_seed,
-    apply_steps, apply_turbo_toggle, apply_value, list_workflows, load_workflow, match_format_value, output_formats,
-    set_output_prefix,
+    ValueField, analyze, apply_inputs, apply_megapixels, apply_seed, apply_steps,
+    apply_turbo_toggle, apply_value, list_workflows, load_workflow, set_output_prefix,
 )
 
 logger = logging.getLogger("video_creator")
@@ -31,13 +29,17 @@ logger.setLevel(logging.DEBUG)
 RUN_LOG_NAME = "video_creator_run.log"
 RUN_DELIM = "=== New run started ==="
 
+# Largest seed the app uses — the top of the Seed spin box (a QSpinBox is a
+# signed 32-bit int).
+MAX_SEED = 2_147_483_647
+
 
 @dataclass
 class RunRequest:
     workflow_path: Path
     workflow_label: str
     source_path: Path | None                      # None on the Text → Video tab
-    source_kind: str                              # "image" | "video" | "text"
+    source_kind: str                              # "image" | "text"
     prompts: dict[tuple[str, str], str] = field(default_factory=dict)
     lora_edits: dict[tuple[str, str], object] = field(default_factory=dict)
     seed: int | None = None                       # None = random
@@ -45,8 +47,6 @@ class RunRequest:
     length_value: float | None = None
     steps: int | None = None                      # None = leave the workflow as is
     megapixels: float | None = None
-    video_input_mode: str = "auto"                # auto | last_frame | upload_video
-    extend_stitch: bool = False
     history_index: int | None = None              # this run's own prompt-history entry
     turbo_enabled: bool | None = None              # None = leave the workflow's turbo wiring as-is
     output_dir_override: Path | None = None        # Library → Reuse Settings: save back into that video's own folder
@@ -81,8 +81,6 @@ class RunRequest:
             self.length_value,
             self.steps,
             self.megapixels,
-            self.video_input_mode,
-            self.extend_stitch,
             self.turbo_enabled,
             str(self.output_dir_override or ""),
             self.output_name.strip().lower(),
@@ -116,7 +114,6 @@ class RunWorker(QThread):
         self._base_dir = Path(config.get("_base_dir", str(Path(__file__).parent)))
         self._temp_dir = self._base_dir / "temp"
         self._run_id = time.strftime("%Y%m%d_%H%M%S")
-        self._ffmpeg = resolve_ffmpeg(config.get("ffmpeg_path", ""), self._base_dir)
 
         log_path = self._base_dir / RUN_LOG_NAME
         _trim_log(log_path, keep=50)
@@ -170,7 +167,9 @@ class RunWorker(QThread):
                 if slot.name and slot.name != "None":
                     strengths = ", ".join(f"{v:g}" for v in slot.strengths.values()) or "-"
                     self._log(f"LoRA {slot.label}: {slot.name} ({strengths})")
-            seed = req.seed if req.seed is not None else random.randint(0, 2**32 - 1)
+            # Random stays inside what the Seed box can hold, so the number
+            # recorded for this file can always be typed back in as Fixed.
+            seed = req.seed if req.seed is not None else random.randint(0, MAX_SEED)
             n_seed = apply_seed(workflow, seed)
             if n_seed:
                 self._log(f"Seed: {seed} ({n_seed} field{'s' if n_seed != 1 else ''})")
@@ -183,30 +182,9 @@ class RunWorker(QThread):
             if req.turbo_enabled is not None and info.turbo is not None:
                 apply_turbo_toggle(workflow, info.turbo, req.turbo_enabled)
                 self._log(f"Turbo LoRA + Sampler: {'on' if req.turbo_enabled else 'off'}")
-            src = probe(self._ffmpeg, req.source_path) if req.source_kind == "video" and req.source_path else None
-            if src is not None and src.width:
-                self._log(
-                    f"Source: {src.width}x{src.height} {src.fps:g}fps {src.vcodec or 'unknown codec'}"
-                    f"{'' if src.has_audio else ' (no audio)'}"
-                )
-            mp_value = req.megapixels
-            if req.source_kind == "video" and req.extend_stitch and info.mp_fields:
-                # The new clip gets appended to this video, so generate it at the
-                # source's own frame size instead of the megapixels box's value.
-                if src is not None and src.width and src.height:
-                    matched = round(src.width * src.height / (1024 * 1024), 3)
-                    if mp_value is None or abs(matched - mp_value) > 0.005:
-                        was = f"{mp_value:g}" if mp_value is not None else "the workflow's value"
-                        self._log(
-                            f"Appending — matching the source's {src.width}x{src.height}: "
-                            f"megapixels {matched:g} (was {was})"
-                        )
-                    mp_value = matched
-            if mp_value is not None and info.mp_fields:
-                n_mp = apply_megapixels(workflow, info.mp_fields, mp_value)
-                self._log(f"Megapixels: {mp_value:g} ({n_mp} node{'s' if n_mp != 1 else ''})")
-            if src is not None:
-                self._check_output_format(workflow, src, req)
+            if req.megapixels is not None and info.mp_fields:
+                n_mp = apply_megapixels(workflow, info.mp_fields, req.megapixels)
+                self._log(f"Megapixels: {req.megapixels:g} ({n_mp} node{'s' if n_mp != 1 else ''})")
             # Re-read the patched graph so the progress plan matches what runs
             info = analyze(workflow)
 
@@ -218,8 +196,6 @@ class RunWorker(QThread):
                         "Pick an image-to-video workflow for this tab."
                     )
                 self._feed_image(workflow, info, req.source_path)
-            elif req.source_kind == "video":
-                self._feed_video(workflow, info, req.source_path)
             else:
                 # Text → Video: nothing to upload. A workflow with an image or
                 # video loader would run against whatever file name is baked
@@ -229,7 +205,7 @@ class RunWorker(QThread):
                     raise RuntimeError(
                         "This workflow takes an image or video input, so it isn't text-to-video. "
                         "Pick a workflow with no LoadImage / LoadVideo node for this tab (the "
-                        "Image → Video and Video → Extend tabs run the ones that need a source)."
+                        "Image → Video tab runs the ones that start from an image)."
                     )
                 if not info.prompts:
                     raise RuntimeError(
@@ -264,11 +240,12 @@ class RunWorker(QThread):
             self._check_cancel()
 
             results = [str(p) for p in outputs]
-            if req.source_kind == "video" and req.extend_stitch and outputs:
-                stitched = self._stitch_extension(req.source_path, outputs[0], req)
-                results.append(str(stitched))
 
             timing = run_timing(time.time() - t0, render_seconds, steps.result())
+            if n_seed:
+                # The seed that really went to the server (the request only
+                # says "random") — history stores it per result file.
+                timing["seed"] = seed
             done = f"Done in {_fmt(timing['run_seconds'])} (render {_fmt(timing['render_seconds'])}"
             if "step_seconds" in timing:
                 done += f", {timing['sampler_steps']} steps @ {timing['step_seconds']:.2f} s/step"
@@ -320,80 +297,6 @@ class RunWorker(QThread):
                 workflow[nid]["inputs"][key] = 0
         self._log(f"Folder → node {nid} ({title or 'Load Image List From Dir'})")
 
-    def _feed_video(self, workflow: dict, info, video_path: Path):
-        mode = self._req.video_input_mode
-        if mode == "auto":
-            if info.video_nodes:
-                mode = "upload_video"
-            elif info.accepts_image:
-                mode = "last_frame"
-            else:
-                raise RuntimeError(
-                    "This workflow has neither a video input (LoadVideo / VHS_LoadVideo) nor an "
-                    "image input (LoadImage). Pick a workflow that can take the selected video or its last frame."
-                )
-
-        if mode == "upload_video":
-            if not info.video_nodes:
-                raise RuntimeError(
-                    "Input mode is 'Upload video' but this workflow has no LoadVideo / VHS_LoadVideo node. "
-                    "Switch the input mode to 'Last frame → image' or pick a video-input workflow."
-                )
-            nid, title, key = info.video_nodes[0]
-            self._log(f"Uploading video {video_path.name} ({video_path.stat().st_size // 1024} KB)...")
-            name = self._client.upload(video_path, subfolder="VideoCreator")
-            workflow[nid]["inputs"][key] = name
-            self._log(f"Video → node {nid} ({title or 'Load Video'}) as {name}")
-            return
-
-        # last_frame
-        if not info.accepts_image:
-            raise RuntimeError(
-                "Input mode is 'Last frame → image' but this workflow has no LoadImage / folder loader node."
-            )
-        frame = self._temp_dir / f"{_safe(video_path.stem)}_lastframe_{self._run_id}.png"
-        self._log(f"Extracting last frame of {video_path.name}...")
-        extract_last_frame(self._ffmpeg, video_path, frame)
-        self._feed_image(workflow, info, frame)
-
-    def _check_output_format(self, workflow: dict, src, req: RunRequest) -> None:
-        """The extension should be written in the same codec as the video it
-        extends. Retune the graph about to run when the clip gets appended,
-        otherwise just say what the mismatch is."""
-        if not src.vcodec:
-            return
-        for fmt in output_formats(workflow):
-            if not fmt.codec or fmt.codec == src.vcodec:
-                continue
-            node = workflow.get(fmt.node_id, {})
-            allowed = self._client.list_options(node.get("class_type", ""), fmt.key)
-            target = match_format_value(fmt.value, src.vcodec, allowed)
-            if req.extend_stitch and target:
-                apply_output_format(workflow, fmt, target)
-                self._log(
-                    f"Output format: {fmt.value} -> {target} to match the source video ({src.vcodec})"
-                )
-            elif req.extend_stitch:
-                self._log(
-                    f"WARNING: this workflow saves {fmt.codec} ({fmt.value}) but the source video is "
-                    f"{src.vcodec}, and the server offers no {src.vcodec} option for {fmt.label} — "
-                    f"the appended file will be re-encoded."
-                )
-            else:
-                self._log(
-                    f"Note: this workflow saves {fmt.codec} ({fmt.value}); the source video is {src.vcodec}."
-                )
-        if src.fps:
-            for nid, node in workflow.items():
-                if not isinstance(node, dict) or node.get("class_type") not in ("VHS_VideoCombine",):
-                    continue
-                rate = (node.get("inputs") or {}).get("frame_rate")
-                if isinstance(rate, (int, float)) and abs(float(rate) - src.fps) > 0.01:
-                    self._log(
-                        f"Note: this workflow saves at {float(rate):g} fps, the source video is "
-                        f"{src.fps:g} fps — the appended clip gets resampled to {src.fps:g}."
-                    )
-
     def _on_phase(self, label: str):
         self._log(label)
         self.phase.emit(label)
@@ -423,8 +326,7 @@ class RunWorker(QThread):
         for idx, f in enumerate(files, 1):
             ext = Path(f["filename"]).suffix or ".mp4"
             suffix = f"_{idx}" if len(files) > 1 else ""
-            mark = f"_{EXT_MARK}" if req.source_kind == "video" else ""
-            dest = out_dir / _fit_name(out_dir, stem, f"_{label}{mark}_{self._run_id}{suffix}{ext}")
+            dest = out_dir / _fit_name(out_dir, stem, f"_{label}_{self._run_id}{suffix}{ext}")
             self._log(f"Downloading {f['filename']} → {dest.name}")
             self._client.download(f, dest)
             results.append(dest)
@@ -434,24 +336,12 @@ class RunWorker(QThread):
         return results
 
     def _output_stem(self, req: RunRequest) -> str:
-        """What a result file is named after. Video sources shed the workflow
-        and stamp a previous run appended, so a chain of extensions keeps one
-        stable base name instead of growing past what Windows allows. A
-        text-to-video run has no source, so it takes the name typed on the
-        tab, or a plain marker when that's blank."""
+        """What a result file is named after: the source image, or for a
+        text-to-video run (no source) the name typed on the tab, or a plain
+        marker when that's blank."""
         if req.source_path is None:
             return _safe(req.output_name) if req.output_name.strip() else TEXT_STEM
-        if req.source_kind != "video":
-            return _safe(req.source_path.stem)
-        return _base_stem(req.source_path.stem, _workflow_labels(self._cfg.get("workflow_dir", "")))
-
-    def _stitch_extension(self, source: Path, clip: Path, req: RunRequest) -> Path:
-        out_dir = clip.parent
-        dest = out_dir / _fit_name(out_dir, self._output_stem(req), f"_extended_{self._run_id}.mp4")
-        self._log(f"Appending new clip to {source.name} → {dest.name}")
-        concat_videos(self._ffmpeg, [source, clip], dest)
-        self._log(f"Extended video saved ({dest.stat().st_size // 1024} KB)")
-        return dest
+        return _safe(req.source_path.stem)
 
 
 class _Cancelled(Exception):
@@ -463,13 +353,10 @@ _STAMP_RE = re.compile(r"_\d{8}_\d{6}$")
 # Longest full path we will write. Windows refuses at 260.
 MAX_PATH = 250
 
-# Marks a clip produced from a video source, i.e. an extension.
-EXT_MARK = "EXT"
-
 # Base name of a text-to-video clip when no output name was typed.
 TEXT_STEM = "T2V"
 
-TAB_LABELS = {"image": "Image → Video", "video": "Video → Extend", "text": "Text → Video"}
+TAB_LABELS = {"image": "Image → Video", "text": "Text → Video"}
 
 
 def _workflow_labels(workflow_dir: str) -> list[str]:
@@ -488,31 +375,23 @@ def _workflow_labels(workflow_dir: str) -> list[str]:
 
 
 def _base_stem(stem: str, labels: list[str], passes: int = 4) -> str:
-    """Strip what earlier runs appended, so extending an extension doesn't
-    grow the name every pass: both `<base>_<workflow>_<stamp>` and
-    `<base>_extended_<stamp>` come back as `<base>`."""
+    """Strip the `_<workflow>_<stamp>` earlier runs appended, so a name taken
+    from a finished video (Library → Reuse Settings) doesn't grow every retry."""
     out = _safe(stem)
     for _ in range(passes):
         trimmed = _STAMP_RE.sub("", out)
         if trimmed == out:
             break
-        ours = False
-        mark = "_" + EXT_MARK.lower()
-        if trimmed.lower().endswith(mark) and len(trimmed) > len(mark):
-            trimmed = trimmed[: -len(mark)]
-            ours = True
         low = trimmed.lower()
-        for tail in ["extended"] + labels:
-            t = "_" + _safe(tail).lower()
-            if low.endswith(t) and len(trimmed) > len(t):
-                trimmed = trimmed[: -len(t)]
-                ours = True
+        for label in labels:
+            tail = "_" + _safe(label).lower()
+            if low.endswith(tail) and len(trimmed) > len(tail):
+                out = trimmed[: -len(tail)]
                 break
-        if not ours:
+        else:
             # A stamp with nothing of ours in front of it belongs to the file
             # itself (a camera name like IMG_20260101_120000) — keep it.
             break
-        out = trimmed
     return out or "video"
 
 
@@ -543,7 +422,7 @@ def _safe(name: str) -> str:
 def run_timing(run_seconds: float, render_seconds: float, steps: dict | None = None) -> dict:
     """What a finished run reports about how long it took, in the shape
     the history entry stores: ``run_seconds`` is the whole run from Create
-    to the file on disk (upload, queue wait, render, download, stitch);
+    to the file on disk (upload, queue wait, render, download);
     ``render_seconds`` is the ComfyUI part alone, queued to finished; the
     sampler keys from ``StepTimer.result()`` ride along when there are any."""
     timing = {"run_seconds": round(run_seconds, 1), "render_seconds": round(render_seconds, 1)}

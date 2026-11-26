@@ -20,22 +20,65 @@ RunPod S3 quirks respected (see the S3 Browser app): single-object
 a real directory node that survives its files, so empty parent folders are
 removed bottom-up.
 
+The second half of this module is the bulk "Clean up pod folders" button
+(Settings > Models): it lists everything under this app's own two folders on
+the volume - <output prefix>VideoCreator/ (results, plus the first-frame .png
+and -audio intermediates the per-run delete never sees) and
+<input prefix>VideoCreator/ (the source images/videos uploaded for each run)
+- shows the totals for confirmation, then deletes file by file on a QThread.
+Nothing outside those two folders is ever listed or touched.
+
 boto3 is imported lazily so the app starts without it.
 """
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+
+from PyQt6.QtCore import QThread, pyqtSignal
 
 CFG_DELETE_AFTER = "s3_delete_outputs_after_download"
 CFG_OUTPUT_PREFIX = "s3_output_prefix"        # ComfyUI/output inside the bucket
 DEFAULT_OUTPUT_PREFIX = "runpod-slim/ComfyUI/output/"
+CFG_INPUT_PREFIX = "s3_input_prefix"          # ComfyUI/input inside the bucket
+DEFAULT_INPUT_PREFIX = "runpod-slim/ComfyUI/input/"
+
+# The subfolder this app uses under both ComfyUI/output and ComfyUI/input
+# (run_worker uploads to input/VideoCreator/ and results are written to
+# output/VideoCreator/<run id>/). The bulk cleanup never leaves these two.
+APP_FOLDER = "VideoCreator"
 
 # The object can lag a moment behind the pod's /view endpoint, and RunPod's
 # endpoint answers an occasional transient 403/404 on HeadObject.
 _HEAD_ATTEMPTS = 4
 _HEAD_DELAY = 2.0
+
+
+def norm_prefix(value: str | None, default: str) -> str:
+    """Bucket prefix with forward slashes and exactly one trailing slash."""
+    prefix = (value or "").strip().replace("\\", "/") or default
+    return prefix if prefix.endswith("/") else prefix + "/"
+
+
+def make_client(config):
+    """boto3 S3 client for the RunPod volume, built from the Settings values.
+    Raises if boto3 is missing or the connection fields are blank."""
+    import boto3
+    from botocore.config import Config as BotoConfig
+    endpoint = (config.get("s3_endpoint_url") or "").strip()
+    if not endpoint or not (config.get("s3_bucket_name") or "").strip():
+        raise ValueError("S3 endpoint and bucket are not set (Settings > Models)")
+    session = boto3.session.Session(
+        profile_name=(config.get("s3_profile_name") or "").strip() or None)
+    return session.client(
+        "s3",
+        region_name=(config.get("s3_region") or "").strip() or None,
+        endpoint_url=endpoint,
+        config=BotoConfig(s3={"addressing_style": "path"}, signature_version="s3v4",
+                          read_timeout=120, retries={"max_attempts": 3}),
+    )
 
 
 def enabled(config) -> bool:
@@ -57,8 +100,7 @@ class OutputCleaner:
         self._client = None
         self._failed = False          # client could not be built: stay quiet after the first message
         self.bucket = (config.get("s3_bucket_name") or "").strip()
-        prefix = (config.get(CFG_OUTPUT_PREFIX) or DEFAULT_OUTPUT_PREFIX).strip().replace("\\", "/")
-        self.prefix = prefix if prefix.endswith("/") else prefix + "/"
+        self.prefix = norm_prefix(config.get(CFG_OUTPUT_PREFIX), DEFAULT_OUTPUT_PREFIX)
 
     # ------------------------------------------------------------------ #
 
@@ -66,17 +108,7 @@ class OutputCleaner:
         if self._client is not None or self._failed:
             return self._client
         try:
-            import boto3
-            from botocore.config import Config as BotoConfig
-            session = boto3.session.Session(
-                profile_name=(self._config.get("s3_profile_name") or "").strip() or None)
-            self._client = session.client(
-                "s3",
-                region_name=(self._config.get("s3_region") or "").strip() or None,
-                endpoint_url=(self._config.get("s3_endpoint_url") or "").strip(),
-                config=BotoConfig(s3={"addressing_style": "path"}, signature_version="s3v4",
-                                  read_timeout=120, retries={"max_attempts": 3}),
-            )
+            self._client = make_client(self._config)
         except Exception as e:  # noqa: BLE001
             self._failed = True
             self._log(f"Pod cleanup skipped — S3 not usable: {e}")
@@ -144,3 +176,165 @@ class OutputCleaner:
         except Exception as e:  # noqa: BLE001
             self._log(f"Pod cleanup failed for {file_info.get('filename', '?')}: {e}")
             return False
+
+
+# ====================================================================== #
+# Bulk cleanup of this app's folders on the volume (Settings > Models)
+# ====================================================================== #
+
+@dataclass
+class FolderScan:
+    """Everything found under one of the app's folders on the volume."""
+    label: str                      # "Results" / "Uploaded sources"
+    prefix: str                     # full bucket prefix, trailing slash
+    files: list[tuple[str, int]] = field(default_factory=list)   # (key, size)
+    folders: list[str] = field(default_factory=list)             # dir keys, deepest first, root excluded
+
+    @property
+    def count(self) -> int:
+        return len(self.files)
+
+    @property
+    def size(self) -> int:
+        return sum(sz for _, sz in self.files)
+
+
+def app_folders(config) -> list[tuple[str, str]]:
+    """(label, prefix) of the two folders this app owns on the volume."""
+    out = norm_prefix(config.get(CFG_OUTPUT_PREFIX), DEFAULT_OUTPUT_PREFIX)
+    inp = norm_prefix(config.get(CFG_INPUT_PREFIX), DEFAULT_INPUT_PREFIX)
+    return [("Results", out + APP_FOLDER + "/"), ("Uploaded sources", inp + APP_FOLDER + "/")]
+
+
+def _walk_folders(client, bucket: str, prefix: str) -> list[str]:
+    """Every folder node below `prefix` (not `prefix` itself). RunPod hides
+    folder nodes from a flat listing but reports them as CommonPrefixes of a
+    delimiter listing, so this walks one level at a time."""
+    found: list[str] = []
+    pending = [prefix]
+    while pending:
+        cur = pending.pop()
+        token = None
+        while True:
+            kw = {"Bucket": bucket, "Prefix": cur, "Delimiter": "/"}
+            if token:
+                kw["ContinuationToken"] = token
+            resp = client.list_objects_v2(**kw)
+            for cp in resp.get("CommonPrefixes", []):
+                sub = cp["Prefix"]
+                if sub != cur and sub.startswith(prefix):
+                    found.append(sub)
+                    pending.append(sub)
+            token = resp.get("NextContinuationToken")
+            if not token:
+                break
+    return found
+
+
+def scan_folders(client, bucket: str, folders: list[tuple[str, str]]) -> list[FolderScan]:
+    """List files and folder nodes under each of the app's folders. Folders
+    come back deepest first, so deleting in order never hits a non-empty
+    parent."""
+    scans = []
+    for label, prefix in folders:
+        scan = FolderScan(label, prefix)
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                if key == prefix:
+                    continue
+                if key.endswith("/"):           # a folder node that did show up
+                    if key not in scan.folders:
+                        scan.folders.append(key)
+                    continue
+                scan.files.append((key, int(obj.get("Size", 0))))
+        for d in _walk_folders(client, bucket, prefix):
+            if d not in scan.folders:
+                scan.folders.append(d)
+        scan.folders.sort(key=lambda k: k.count("/"), reverse=True)
+        scans.append(scan)
+    return scans
+
+
+def fmt_size(n: int) -> str:
+    if n >= 1 << 30:
+        return f"{n / (1 << 30):.2f} GB"
+    if n >= 1 << 20:
+        return f"{n / (1 << 20):.1f} MB"
+    return f"{max(n, 0) // 1024:,} KB"
+
+
+class FolderScanWorker(QThread):
+    """Lists the app's folders on the volume without blocking the dialog."""
+    scanned = pyqtSignal(list)          # list[FolderScan]
+    failed = pyqtSignal(str)
+
+    def __init__(self, config: dict, parent=None):
+        super().__init__(parent)
+        self._config = config
+
+    def run(self):
+        try:
+            client = make_client(self._config)
+            bucket = (self._config.get("s3_bucket_name") or "").strip()
+            self.scanned.emit(scan_folders(client, bucket, app_folders(self._config)))
+        except ImportError:
+            self.failed.emit("boto3 is not installed in the Python running this app - use the built EXE or the repo .venv")
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(f"{type(e).__name__}: {e}")
+
+
+class FolderCleanupWorker(QThread):
+    """Deletes everything a FolderScan found, one object per request (RunPod
+    refuses bulk DeleteObjects), files first then folders deepest-first.
+    Cancel stops after the object in flight; what is already gone stays gone."""
+    progress = pyqtSignal(int, int, str)        # done, total, key
+    finished_cleanup = pyqtSignal(int, int, int, list)   # files deleted, folders deleted, bytes freed, errors
+    failed = pyqtSignal(str)
+
+    def __init__(self, config: dict, scans: list[FolderScan], parent=None):
+        super().__init__(parent)
+        self._config = config
+        self._scans = scans
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        try:
+            client = make_client(self._config)
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(f"{type(e).__name__}: {e}")
+            return
+        bucket = (self._config.get("s3_bucket_name") or "").strip()
+        total = sum(s.count + len(s.folders) for s in self._scans)
+        done = files = folders = freed = 0
+        errors: list[str] = []
+        for scan in self._scans:
+            for key, size in scan.files:
+                if self._cancel:
+                    break
+                self.progress.emit(done, total, key)
+                try:
+                    client.delete_object(Bucket=bucket, Key=key)
+                    files += 1
+                    freed += size
+                except Exception as e:  # noqa: BLE001
+                    errors.append(f"{key}: {e}")
+                done += 1
+            if self._cancel:
+                break
+            for dir_key in scan.folders:        # deepest first; all empty now
+                if self._cancel:
+                    break
+                self.progress.emit(done, total, dir_key)
+                try:
+                    client.delete_object(Bucket=bucket, Key=dir_key)
+                    folders += 1
+                except Exception as e:  # noqa: BLE001 - a leftover empty folder costs nothing
+                    errors.append(f"{dir_key}: {e}")
+                done += 1
+        self.progress.emit(done, total, "")
+        self.finished_cleanup.emit(files, folders, freed, errors)

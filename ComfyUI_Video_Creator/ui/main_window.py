@@ -1,3 +1,4 @@
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -12,15 +13,11 @@ from PyQt6.QtWidgets import (
 import alerts
 import model_sync
 from config import ConfigManager
-from extend_marks import MARKS_NAME, ExtendMarks
-from file_ops import archive_paths, delete_paths, thumbnail_caches
 from media_tools import extract_thumbnail, resolve_ffmpeg
 from run_worker import RunRequest, RunWorker, _base_stem, _workflow_labels
-from workflow_folders import library_dir_for
 from processed import processed_sources
 from ui.library_tab import LibraryTab
 from ui.pod_control import PodControl
-from ui.prompt_history import source_for_result
 from ui.queue_dialog import QueueDialog
 from ui.run_panel import RunPanel
 from ui.settings_dialog import SettingsDialog
@@ -33,8 +30,8 @@ from workflow_tools import analyze, apply_inputs, apply_turbo_toggle, load_workf
 # grid spacing, the list padding, the frame and a scrollbar.
 TWO_COLUMN_WIDTH = 2 * (THUMB_SIZE + 14) + 3 * 4 + 12 + 2 + 14
 
-# Tab positions. Library → Send to Extend and Reuse Settings jump by these.
-TAB_INDEX = {"image": 0, "video": 1, "text": 2, "library": 3}
+# Tab positions. Library → Reuse Settings jumps by these.
+TAB_INDEX = {"image": 0, "text": 1, "library": 2}
 
 
 class MainWindow(QMainWindow):
@@ -92,7 +89,7 @@ class MainWindow(QMainWindow):
         title.setObjectName("header")
         header.addWidget(title)
         sub = QLabel(f"v{self.version}  ·  single-shot ComfyUI API workflows: "
-                     "image → video, video → extension, text → video")
+                     "image → video, text → video")
         sub.setObjectName("subtitle")
         header.addWidget(sub)
         header.addStretch()
@@ -106,7 +103,7 @@ class MainWindow(QMainWindow):
         refresh_btn = QPushButton("↻ Lists")
         refresh_btn.setObjectName("secondary_btn")
         refresh_btn.setToolTip("Rescan every list from disk and the server — workflows, LoRAs, "
-                               "image and video folders, the Library (F5)")
+                               "the image folder, the Library (F5)")
         refresh_btn.clicked.connect(self.refresh_lists)
         header.addWidget(refresh_btn)
         QShortcut(QKeySequence("F5"), self, activated=self.refresh_lists)
@@ -116,25 +113,13 @@ class MainWindow(QMainWindow):
         header.addWidget(settings_btn)
         root.addLayout(header)
 
-        # Sources already extended (or hidden by hand) — next to the config, like every other setting
-        self._marks = ExtendMarks(self.config.config_path.parent / MARKS_NAME)
         self._tabs = QTabWidget()
-        # Multi-select (here and on the Extend tab): every selected file becomes its own queued run.
+        # Multi-select: every selected image becomes its own queued run.
         self._image_browser = MediaBrowser("image", self.config.get("image_dir", ""),
                                            self.config.get("image_sort", "Name A→Z"), self._ffmpeg,
-                                           multi=True, processed_provider=lambda: self._processed_sources("image"))
+                                           multi=True, processed_provider=self._processed_sources)
         self._image_panel = RunPanel("image", self.config)
         self._tabs.addTab(self._make_tab(self._image_browser, self._image_panel), "🖼  Image → Video")
-
-        self._video_browser = MediaBrowser("video", self.config.get("video_dir", ""),
-                                           self.config.get("video_sort", "Newest First"), self._ffmpeg,
-                                           multi=True, processed_provider=lambda: self._processed_sources("video"),
-                                           recursive=True,     # per-workflow output lives in subfolders
-                                           extend_tools=True,
-                                           hide_clips=bool(self.config.get("extend_hide_clips", True)),
-                                           hint="Thumbnails show each video's LAST frame — the extension's starting point")
-        self._video_panel = RunPanel("video", self.config)
-        self._tabs.addTab(self._make_tab(self._video_browser, self._video_panel), "🎬  Video → Extend")
 
         # Text → Video has nothing to pick from, so no thumbnail browser: the
         # run panel — and its prompt editor — gets the whole tab.
@@ -144,32 +129,24 @@ class MainWindow(QMainWindow):
         text_lay.setContentsMargins(8, 8, 8, 8)
         text_lay.addWidget(self._text_panel)
         self._tabs.addTab(text_page, "✍  Text → Video")
-        self._panels = {"image": self._image_panel, "video": self._video_panel, "text": self._text_panel}
+        self._panels = {"image": self._image_panel, "text": self._text_panel}
 
-        for b in (self._video_browser, self._image_browser):
-            b.deleting.connect(self._on_files_deleting)
-            b.deleted.connect(self._on_files_deleted)
-        self._video_browser.hide_requested.connect(self._hide_extended)
-        self._video_browser.unhide_requested.connect(self._unhide_extended)
-        self._video_browser.send_to_library_requested.connect(self._send_to_library)
-        self._video_browser.hide_clips_changed.connect(self._on_hide_clips_changed)
+        self._image_browser.deleting.connect(self._on_files_deleting)
+        self._image_browser.deleted.connect(self._on_files_deleted)
         self._library = LibraryTab(self.config, self._ffmpeg)
         self._library.browser.deleting.connect(self._on_files_deleting)
         self._library.browser.deleted.connect(self._on_files_deleted)
         self._library.play_requested.connect(self._play_list)
-        self._library.send_to_extend.connect(self._send_to_extend)
         self._library.reuse_requested.connect(self._reuse_settings)
         # A different Library folder changes which sources count as finished.
-        self._library.folder_changed.connect(lambda _f: self._refresh_processed_pickers())
-        # Videos were rearranged into workflow folders: the Extend picker lists them afresh.
-        self._library.files_moved.connect(self._video_browser.refresh)
-        self._library.files_moved.connect(self._refresh_processed_pickers)
+        self._library.folder_changed.connect(lambda _f: self._refresh_processed_picker())
+        # Videos rearranged into workflow folders change which images count as finished.
+        self._library.files_moved.connect(self._refresh_processed_picker)
         self._tabs.addTab(self._library, "📚  Library")
         root.addWidget(self._tabs, stretch=1)
 
         self.setCentralWidget(central)
         self._wire(self._image_browser, self._image_panel, "image_dir", "image_sort")
-        self._wire(self._video_browser, self._video_panel, "video_dir", "video_sort")
         self._wire_panel(self._text_panel)
         # A clone made on one tab has to show up in the other tabs' dropdowns too.
         for source in self._panels.values():
@@ -177,8 +154,7 @@ class MainWindow(QMainWindow):
                 if other is not source:
                     source.workflows_changed.connect(other.refresh_workflow_list)
                     source.loras_changed.connect(other.apply_shared_loras)
-        self._video_browser.activated.connect(lambda p: self._play(str(p)))
-        # Switching workflow re-filters that tab's picker (an image only counts as done for the
+        # Switching workflow re-filters the image picker (an image only counts as done for the
         # workflow that made its video) and points the Library at the same workflow.
         for kind, panel in self._panels.items():
             panel.workflow_selected.connect(lambda rel, k=kind: self._on_workflow_selected(k, rel))
@@ -188,100 +164,24 @@ class MainWindow(QMainWindow):
         # Initial scans run after the signals above are wired so the run
         # panels see the restored selection state.
         self._image_browser.refresh()
-        self._video_browser.refresh()
         self._library.refresh()
 
-    def _refresh_processed_pickers(self):
+    def _refresh_processed_picker(self):
         self._image_browser.refresh_processed()
-        self._video_browser.refresh_processed()
 
-    def _processed_sources(self, kind: str) -> set[str]:
-        """Names of the source files the workflow selected on this tab has already
+    def _processed_sources(self) -> set[str]:
+        """Names of the images the workflow selected on the Image tab has already
         turned into a video that is still in the Library — hidden in the picker.
         Other workflows' videos don't count, so the same image stays available
         until THIS workflow has made its own; and a Library folder with no
         videos in it un-hides everything."""
-        done = processed_sources(self.config.get("workflow_dir", ""),
+        return processed_sources(self.config.get("workflow_dir", ""),
                                  self._library.effective_folder(),
-                                 self._panels[kind].workflow_rel)
-        if kind == "video":
-            done |= self._marks.hidden_names()      # extended already / hidden by hand
-        return done
-
-    # -- Extend picker: keep track of one set of extensions at a time ------ #
-
-    def _hide_extended(self, paths: list):
-        n = self._marks.add(paths)
-        self._video_browser.refresh_processed()
-        self._video_panel.append_log(f"Hid {n} video{'s' if n != 1 else ''} from the Extend list "
-                                     "(Show all brings them back, or select and Unhide)")
-
-    def _unhide_extended(self, paths: list):
-        n = self._marks.remove(paths)
-        self._video_browser.refresh_processed()
-        self._video_panel.append_log(f"Unhid {n} video{'s' if n != 1 else ''}")
-
-    def _on_hide_clips_changed(self, on: bool):
-        self.config.set("extend_hide_clips", bool(on))
-        self.config.save()
-
-    def _send_to_library(self, paths: list):
-        """Extend tab → Library: move the picked (complete) videos into the Library
-        folder, inside the active workflow's own folder, so they show up in the
-        Library tab and count as that workflow's finished videos."""
-        root = self._library.effective_folder()
-        if not root:
-            QMessageBox.information(self, "Send to Library",
-                                    "Set a Library (or Output) folder in Settings first (Folders).")
-            return
-        root_p = Path(root)
-        dest = (library_dir_for(root_p, self._video_panel.workflow_rel)
-                if self.config.get("output_per_workflow", True) else root_p)
-
-        def in_library(p: Path) -> bool:
-            try:
-                p.resolve().relative_to(root_p.resolve())
-                return True
-            except (ValueError, OSError):
-                return False
-
-        todo = [Path(p) for p in paths if not in_library(Path(p))]
-        if not todo:
-            QMessageBox.information(self, "Send to Library",
-                                    "Already in the Library folder — nothing to move.")
-            return
-        names = "\n".join(p.name for p in todo[:8]) + ("\n…" if len(todo) > 8 else "")
-        plural = "s" if len(todo) != 1 else ""
-        ans = QMessageBox.question(
-            self, "Send to Library",
-            f"Move {len(todo)} video{plural} into the Library?\n\n{names}\n\n→ {dest}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes)
-        if ans != QMessageBox.StandardButton.Yes:
-            return
-        self._on_files_deleting(todo)           # close a player that has one of these open
-        browser_root = Path(self._video_browser.folder) if self._video_browser.folder else None
-        caches: list[Path] = []
-        for p in todo:
-            caches += thumbnail_caches(p, browser_root)
-        try:
-            moved, errors = archive_paths(todo, dest)      # moves, keeping names unique
-        except OSError as e:
-            QMessageBox.warning(self, "Send to Library", f"Could not create {dest}:\n{e}")
-            return
-        if caches:
-            delete_paths(caches)                # re-made on demand in the new folder
-        if errors:
-            QMessageBox.warning(self, "Send to Library", "Some files could not be moved:\n" + "\n".join(errors))
-        self._video_panel.append_log(f"Sent {len(moved)} video{'s' if len(moved) != 1 else ''} to the Library: {dest}")
-        self._video_browser.refresh()
-        self._library.refresh()
-        self._refresh_processed_pickers()
+                                 self._panels["image"].workflow_rel)
 
     def _on_workflow_selected(self, kind: str, rel: str):
-        browser = {"image": self._image_browser, "video": self._video_browser}.get(kind)
-        if browser is not None:
-            browser.refresh_processed()
+        if kind == "image":
+            self._refresh_processed_picker()
         if self._tabs.currentIndex() == TAB_INDEX[kind]:
             self._library.follow_workflow(rel)
 
@@ -334,6 +234,7 @@ class MainWindow(QMainWindow):
 
     def _wire(self, browser: MediaBrowser, panel: RunPanel, dir_key: str, sort_key: str):
         browser.selection_paths_changed.connect(panel.set_sources)
+        browser.queue_requested.connect(panel.queue_from_shortcut)
         browser.folder_changed.connect(lambda f: (self.config.set(dir_key, f), self.config.save()))
         browser.sort_changed.connect(lambda s: (self.config.set(sort_key, s), self.config.save()))
         self._wire_panel(panel)
@@ -357,9 +258,8 @@ class MainWindow(QMainWindow):
         if self.config.server_url():
             first._fetch_loras_from_server()
         self._image_browser.refresh()
-        self._video_browser.refresh()
         self._library.refresh()
-        self._log_everywhere("Lists refreshed — workflows, LoRAs, image/video folders, Library")
+        self._log_everywhere("Lists refreshed — workflows, LoRAs, image folder, Library")
 
     def _update_mode_label(self):
         mode = "RunPod" if self.config.is_runpod() else "Local"
@@ -372,22 +272,22 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
 
     def _open_settings(self):
-        before = {k: self.config.get(k) for k in ("image_dir", "video_dir", "workflow_dir", "ffmpeg_path", "loras_dir", "output_dir", "library_dir")}
+        before = {k: self.config.get(k) for k in ("image_dir", "workflow_dir", "ffmpeg_path", "loras_dir", "output_dir", "library_dir")}
         dlg = SettingsDialog(self.config, self)
         if dlg.exec() != SettingsDialog.DialogCode.Accepted:
             return
         self._update_mode_label()
         if self.config.get("image_dir") != before["image_dir"]:
             self._image_browser.set_folder(self.config.get("image_dir", ""))
-        if self.config.get("video_dir") != before["video_dir"] or self.config.get("ffmpeg_path") != before["ffmpeg_path"]:
-            self._video_browser.set_folder(self.config.get("video_dir", ""))
+        if self.config.get("ffmpeg_path") != before["ffmpeg_path"]:
+            self._library.refresh()          # video thumbnails come from ffmpeg
         if self.config.get("workflow_dir") != before["workflow_dir"]:
             for panel in self._panels.values():
                 panel.reload_workflows()
         if (self.config.get("output_dir") != before["output_dir"]
                 or self.config.get("library_dir") != before["library_dir"]):
             self._library.set_folder(self._library.effective_folder())
-            self._refresh_processed_pickers()
+            self._refresh_processed_picker()
         for panel in self._panels.values():
             panel._font_spin.setValue(int(self.config.get("prompt_font_size", 10) or 10))
             if self.config.get("loras_dir") != before["loras_dir"]:
@@ -420,6 +320,14 @@ class MainWindow(QMainWindow):
             # arrive in the same event-loop turn — a multi-select queues one
             # per image — are checked together, in one pass.
             self._model_queue.append(req)
+            if (not self._model_check_scheduled
+                    and (self._worker is None or not self._worker.isRunning())):
+                # Nothing is running, so the panel still shows the last run's
+                # DONE bar — show that work has begun (model check can take
+                # a minute or two before the run itself starts). Once per
+                # batch: a multi-select queues several requests in one turn.
+                self._panel_for(req).show_preparing(
+                    "Preparing — checking models on the pod before starting…")
             if not self._model_check_scheduled:
                 self._model_check_scheduled = True
                 QTimer.singleShot(0, self._run_model_check)
@@ -704,8 +612,28 @@ class MainWindow(QMainWindow):
         next_up = f"{self._queue[0].source_name} ({self._queue[0].workflow_label})" if self._queue else ""
         for p in self._panels.values():
             p.set_queue_status(n, tooltip, next_up)
+        self._refresh_queue_badges()
         if self._queue_dlg is not None:
             self._queue_dlg.set_items(self._active_req, list(self._queue))
+
+    def _refresh_queue_badges(self):
+        """Tag the picker tiles for what's running / waiting, so the queue is visible
+        right on the thumbnails ('▶ RUNNING', '#1', '#2'…; one image queued twice
+        shows both positions)."""
+        badges: dict[str, tuple[str, bool]] = {}
+
+        def add(req, label, running):
+            if req.source_path is None or req.source_kind != "image":
+                return
+            key = os.path.normcase(os.path.normpath(str(req.source_path)))
+            old = badges.get(key)
+            badges[key] = (f"{old[0]} {label}" if old else label, running or bool(old and old[1]))
+
+        if self._active_req is not None:
+            add(self._active_req, "▶ RUNNING", True)
+        for i, req in enumerate(self._queue):
+            add(req, f"#{i + 1}", False)
+        self._image_browser.set_queue_badges(badges)
 
     def _panel_for(self, req: RunRequest) -> RunPanel:
         return self._panels.get(req.source_kind, self._image_panel)
@@ -776,17 +704,8 @@ class MainWindow(QMainWindow):
         if self._active_panel is not None:
             self._active_panel.on_done(list(paths), self._active_req, timing)
         self._library.refresh()
-        req = self._active_req
-        if req is not None and req.source_kind == "video" and req.source_path is not None:
-            self._marks.add([req.source_path])      # extended: out of the Extend list until Show all
-        # The source of what just finished now has a video, so it drops out of the pickers
-        self._image_browser.refresh_processed()
-        self._video_browser.refresh_processed()
-        # New files may have landed in the folder the Video tab is showing
-        out_dir = Path((self.config.get("output_dir", "") or "").strip() or ".")
-        vid_dir = Path(self._video_browser.folder) if self._video_browser.folder else None
-        if vid_dir is not None and vid_dir.exists() and out_dir.exists() and vid_dir.resolve() == out_dir.resolve():
-            self._video_browser.refresh()
+        # The source of what just finished now has a video, so it drops out of the picker
+        self._refresh_processed_picker()
 
     def _on_failed(self, message: str):
         if self._active_panel is not None:
@@ -865,48 +784,31 @@ class MainWindow(QMainWindow):
         self._open_player(paths[0], paths)
 
     def _on_files_deleted(self, paths: list):
-        """A file deleted in one tab is gone for the others too — the Library
-        and the Extend tab often point at the same folder, and a tile for a
+        """A file deleted in one tab is gone for the others too — a tile for a
         file that no longer exists is worse than a slightly stale count."""
         sender = self.sender()
-        for browser in (self._image_browser, self._video_browser, self._library.browser):
+        for browser in (self._image_browser, self._library.browser):
             if browser is not sender:
                 browser.remove_paths(paths)
-
-    def _send_to_extend(self, path: Path):
-        """Library → Extend: select the video in the Extend tab (switching the
-        Extend folder to the library folder if it lives elsewhere)."""
-        path = Path(path)
-        self._tabs.setCurrentIndex(TAB_INDEX["video"])
-        folder = str(path.parent)
-        if self._video_browser.folder and Path(self._video_browser.folder).resolve() == path.parent.resolve():
-            if not self._video_browser.grid.select_key(str(path)):
-                self._video_panel.set_source(path)
-        else:
-            self.config.set("video_dir", folder)
-            self.config.save()
-            self._video_browser.set_folder(folder)
-            self._video_panel.set_source(path)
-            self._pending_select = str(path)
-            self._video_browser.grid.model().rowsInserted.connect(self._try_pending_select)
-        self._video_panel.append_log(f"Source from Library: {path.name}")
 
     def _reuse_settings(self, video_path: Path, wf_path: Path, entry: dict):
         """Library → Reuse Settings: switch to the tab this run was made on,
         reload its prompt/LoRAs/seed/steps/source, and let the user tweak
-        before pressing Create/Extend themselves — nothing is queued here."""
+        before pressing Create themselves — nothing is queued here."""
         settings = entry.get("settings") or {}
-        # Only the video (Extend) panel ever writes a video_input_mode, and
-        # only the Text → Video panel (or the embedded-metadata fallback, for
-        # a graph with no loader node) sets text_to_video.
+        # History written by v2.x and earlier: only the removed Video → Extend
+        # tab ever stored a value under this key.
         if settings.get("video_input_mode"):
-            kind = "video"
-        elif settings.get("text_to_video"):
-            kind = "text"
-        else:
-            kind = "image"
+            QMessageBox.information(
+                self, "Reuse Settings",
+                "This video was made by extending another video, which this app no longer does "
+                "(use the ComfyUI Chain Automator for that).\n\n"
+                "Its prompt and settings are still shown here in the Library.")
+            return
+        # Only the Text → Video panel (or the embedded-metadata fallback, for a
+        # graph with no loader node) sets text_to_video.
+        kind = "text" if settings.get("text_to_video") else "image"
         panel = self._panels[kind]
-        browser = self._video_browser if kind == "video" else self._image_browser
         self._tabs.setCurrentIndex(TAB_INDEX[kind])
 
         wf_dir = Path((self.config.get("workflow_dir", "") or "").strip())
@@ -923,8 +825,6 @@ class MainWindow(QMainWindow):
 
         if kind == "image":
             self._reuse_image_source(panel, video_path)
-        elif kind == "video":
-            self._reuse_video_source(browser, panel, source_for_result(entry, video_path.name))
         else:
             panel.append_log("Reused settings from Library — text to video needs no source; "
                              "tweak the prompt, then Create.")
@@ -953,30 +853,6 @@ class MainWindow(QMainWindow):
         else:
             panel.append_log(
                 f"⚠ Couldn't extract a starting frame from {video_path.name} — pick a source image, then Create.")
-
-    def _reuse_video_source(self, browser: MediaBrowser, panel: RunPanel, source_name: str):
-        candidate = Path(browser.folder) / source_name if (browser.folder and source_name) else None
-        if candidate is not None and candidate.exists():
-            if not browser.grid.select_key(str(candidate)):
-                panel.set_source(candidate)
-            panel.append_log(f"Reused settings from Library — source: {source_name}")
-        elif source_name:
-            # Moved or deleted outside the app — rescan so the grid matches
-            # what's actually on disk instead of leaving a stale/missing pick.
-            browser.refresh()
-            panel.append_log(f"⚠ Source '{source_name}' wasn't found in {browser.folder or '(no folder set)'} "
-                              "— rescanned that folder. Pick a replacement video, then Extend.")
-        else:
-            panel.append_log("Reused settings from Library (no source recorded for this run — pick one, then Extend).")
-
-    def _try_pending_select(self, *_):
-        key = getattr(self, "_pending_select", None)
-        if key and self._video_browser.grid.select_key(key):
-            self._pending_select = None
-            try:
-                self._video_browser.grid.model().rowsInserted.disconnect(self._try_pending_select)
-            except TypeError:
-                pass
 
     # ------------------------------------------------------------------ #
 
@@ -1020,7 +896,6 @@ class MainWindow(QMainWindow):
         if self._queue_dlg is not None:
             self._queue_dlg.close()
         self._image_browser.shutdown()
-        self._video_browser.shutdown()
         self._library.shutdown()
         self.config.save()
         event.accept()

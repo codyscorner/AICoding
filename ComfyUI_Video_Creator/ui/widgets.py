@@ -1,5 +1,5 @@
-"""Thumbnail grid + background loaders + the folder browser panel used by
-both tabs (images on tab 1, videos on tab 2).
+"""Thumbnail grid + background loaders + the folder browser panel (images on
+the Image → Video tab, videos on the Library tab).
 
 Thumbnail caches use the same layout as the Chain Automator
 (``<folder>/thumbnails/<stem>_<crc>.jpg`` for images, ``<stem>.jpg`` for
@@ -22,9 +22,9 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from extend_marks import superseded_clips
-from file_ops import delete_paths, thumbnail_caches
-from media_tools import IMAGE_EXTS, VIDEO_EXTS, extract_last_frame, extract_thumbnail
+from file_ops import browse_start, delete_paths, thumbnail_caches
+from processed import stem_token
+from media_tools import IMAGE_EXTS, VIDEO_EXTS, extract_thumbnail
 from ui.styles import COLORS
 
 THUMB_SIZE = 200
@@ -171,7 +171,8 @@ class NoScrollComboBox(QComboBox):
 
 
 PROCESSED_ROLE = Qt.ItemDataRole.UserRole + 1     # True on a tile that already has a finished video
-CLIP_ROLE = Qt.ItemDataRole.UserRole + 2          # True on a short extension clip whose complete video exists
+BASE_ROLE = Qt.ItemDataRole.UserRole + 3          # the tile's thumbnail without any queue badge
+BADGE_ROLE = Qt.ItemDataRole.UserRole + 4         # the queue tag text currently stamped on the tile
 
 
 class ThumbnailGrid(QListWidget):
@@ -204,10 +205,40 @@ class ThumbnailGrid(QListWidget):
         painter.drawPixmap((THUMB_SIZE - pix.width()) // 2, (THUMB_SIZE - pix.height()) // 2, pix)
         painter.end()
         item = QListWidgetItem(QIcon(canvas), label)
+        item.setData(BASE_ROLE, canvas)         # the clean thumbnail, so a queue badge can be added/removed
         item.setData(Qt.ItemDataRole.UserRole, key)
         item.setToolTip(key)
         item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
         self.addItem(item)
+
+    @staticmethod
+    def set_badge(item, text: str, running: bool = False):
+        """Stamp a queue tag ('#2', '▶ RUNNING') on the tile's corner; '' clears it."""
+        if (item.data(BADGE_ROLE) or "") == text:
+            return
+        item.setData(BADGE_ROLE, text)
+        base = item.data(BASE_ROLE)
+        if base is None:
+            return
+        if not text:
+            item.setIcon(QIcon(base))
+            return
+        pix = QPixmap(base)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = p.font()
+        font.setBold(True)
+        font.setPointSize(10)
+        p.setFont(font)
+        w = p.fontMetrics().horizontalAdvance(text) + 16
+        h = p.fontMetrics().height() + 6
+        p.setPen(QColor("white"))
+        p.setBrush(QColor("#1e8e3e" if running else "#d97706"))
+        p.drawRoundedRect(6, 6, w, h, 6, 6)
+        p.drawText(6, 6, w, h, Qt.AlignmentFlag.AlignCenter, text)
+        p.end()
+        item.setIcon(QIcon(pix))
+        item.setToolTip(f"{item.data(Qt.ItemDataRole.UserRole)}\n{'Running now' if running else 'In the queue'}: {text}")
 
     def selected_key(self) -> str | None:
         items = self.selectedItems()
@@ -217,12 +248,11 @@ class ThumbnailGrid(QListWidget):
         for i in range(self.count()):
             item = self.item(i)
             if item.data(Qt.ItemDataRole.UserRole) == key:
-                # Asked for by name (Send to Extend, Reuse Settings), so it
-                # shows even while finished sources are hidden.
-                if item.data(PROCESSED_ROLE) or item.data(CLIP_ROLE):
+                # Asked for by name, so it shows even while finished
+                # sources are hidden.
+                if item.data(PROCESSED_ROLE):
                     item.setHidden(False)
                     item.setData(PROCESSED_ROLE, False)
-                    item.setData(CLIP_ROLE, False)
                 self.setCurrentItem(item)
                 self.scrollToItem(item)
                 return True
@@ -331,13 +361,11 @@ class VideoLoaderThread(QThread):
     progress = pyqtSignal(int, int)
     finished_loading = pyqtSignal(int)
 
-    def __init__(self, folder: Path, ffmpeg: str, sort_option: str, last_frame: bool = True,
-                 recursive: bool = False):
+    def __init__(self, folder: Path, ffmpeg: str, sort_option: str, recursive: bool = False):
         super().__init__()
         self._folder = folder
         self._ffmpeg = ffmpeg
         self._sort_key, self._reverse = sort_params(sort_option)
-        self._last_frame = last_frame
         self._recursive = recursive
         self._cancelled = False
 
@@ -355,22 +383,13 @@ class VideoLoaderThread(QThread):
             thumb_dir.mkdir(exist_ok=True)
         except OSError:
             pass
-        # The Extend tab shows each video's LAST frame — that's the
-        # starting point of the extension. Cached under its own name so
-        # it never collides with the Chain Automator's first-frame cache.
-        thumb = thumb_dir / (vid.stem + ("_last.jpg" if self._last_frame else ".jpg"))
+        thumb = thumb_dir / (vid.stem + ".jpg")
         try:
             stale = thumb.exists() and thumb.stat().st_mtime < vid.stat().st_mtime
         except OSError:
             stale = False
         if not thumb.exists() or stale:
-            if self._last_frame:
-                try:
-                    extract_last_frame(self._ffmpeg, vid, thumb)
-                except Exception:
-                    extract_thumbnail(self._ffmpeg, vid, thumb)
-            else:
-                extract_thumbnail(self._ffmpeg, vid, thumb)
+            extract_thumbnail(self._ffmpeg, vid, thumb)
         if not vid.exists():
             return _MISSING
         img = QImage(str(thumb)) if thumb.exists() else QImage()
@@ -430,16 +449,11 @@ class MediaBrowser(QWidget):
     deleting = pyqtSignal(list)              # list[Path] about to be deleted (close players!)
     deleted = pyqtSignal(list)               # list[Path] removed from the folder
     loaded = pyqtSignal(int)                 # a refresh() scan finished, n items in the grid
-    # Extend tools (extend_tools=True): the main window decides what these do
-    hide_requested = pyqtSignal(list)        # list[Path] to hide from the picker
-    unhide_requested = pyqtSignal(list)      # list[Path] to bring back
-    send_to_library_requested = pyqtSignal(list)
-    hide_clips_changed = pyqtSignal(bool)
+    queue_requested = pyqtSignal()           # Space on exactly one selected thumbnail
 
     def __init__(self, kind: str, folder: str, sort_option: str, ffmpeg_getter, parent=None,
-                 multi: bool = False, last_frame: bool = True, title: str | None = None, hint: str = "",
-                 show_delete: bool = True, processed_provider=None, recursive: bool = False,
-                 extend_tools: bool = False, hide_clips: bool = True):
+                 multi: bool = False, title: str | None = None, hint: str = "",
+                 show_delete: bool = True, processed_provider=None, recursive: bool = False):
         super().__init__(parent)
         self.kind = kind                      # "image" | "video"
         # Videos only (images always include subfolders): also list the videos
@@ -451,12 +465,9 @@ class MediaBrowser(QWidget):
         # ticked. None = no such filter (the Library itself).
         self._processed_provider = processed_provider
         self._processed: set[str] = set()
-        # Short extension clips whose complete (stitched) video sits beside them
-        self._superseded: set[str] = set()
         self._loading = False
         self._folder = folder
         self._ffmpeg_getter = ffmpeg_getter
-        self._last_frame = last_frame
         self._loader: QThread | None = None
         self._retired: list[QThread] = []
 
@@ -521,45 +532,6 @@ class MediaBrowser(QWidget):
         row2.addWidget(self._status)
         layout.addLayout(row2)
 
-        if extend_tools:
-            # One set of extensions at a time: send the complete videos on to
-            # the Library, hide what has been extended, drop the short clips.
-            row3 = QHBoxLayout()
-            row3.setSpacing(6)
-            self._send_btn = QPushButton("📚 Send to Library")
-            self._send_btn.setObjectName("secondary_btn")
-            self._send_btn.setToolTip("Move the selected video(s) into the Library folder "
-                                      "(inside the active workflow's folder)")
-            self._send_btn.clicked.connect(lambda: self._emit_selected(self.send_to_library_requested))
-            row3.addWidget(self._send_btn)
-            self._hide_btn = QPushButton("Hide")
-            self._hide_btn.setObjectName("secondary_btn")
-            self._hide_btn.setToolTip("Hide the selected video(s) from this list — already extended, "
-                                      "or not wanted. They come back with Show all, or Unhide.")
-            self._hide_btn.clicked.connect(lambda: self._emit_selected(self.hide_requested))
-            row3.addWidget(self._hide_btn)
-            self._unhide_btn = QPushButton("Unhide")
-            self._unhide_btn.setObjectName("secondary_btn")
-            self._unhide_btn.setToolTip("Bring the selected video(s) back (tick Show all to see and select them)")
-            self._unhide_btn.clicked.connect(lambda: self._emit_selected(self.unhide_requested))
-            row3.addWidget(self._unhide_btn)
-            row3.addSpacing(8)
-            self._clips_chk = QCheckBox("Hide short clips")
-            self._clips_chk.setToolTip(
-                "An extension saves the new short clip AND the complete video.\n"
-                "On: the short clip is hidden once its complete video is beside it.\n"
-                "A clip with no complete video (Append off) is always shown.")
-            self._clips_chk.setChecked(hide_clips)
-            self._clips_chk.toggled.connect(self._on_hide_clips)
-            row3.addWidget(self._clips_chk)
-            row3.addStretch()
-            layout.addLayout(row3)
-            self._extend_btns = (self._send_btn, self._hide_btn, self._unhide_btn)
-            for btn in self._extend_btns:
-                btn.setEnabled(False)
-        else:
-            self._clips_chk = None
-            self._extend_btns = ()
         if hint:
             hint_lbl = QLabel(hint)
             hint_lbl.setObjectName("status_dim")
@@ -576,7 +548,19 @@ class MediaBrowser(QWidget):
         shortcut = QShortcut(QKeySequence.StandardKey.Delete, self.grid)
         shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         shortcut.activated.connect(self.delete_selected)
+        # Space = the Create button for a single selected thumbnail, so
+        # you can arrow/click through the grid and queue each one by keyboard.
+        # A shortcut (not keyPressEvent) so it also beats the list's own
+        # Space-toggles-selection behaviour; several selected = do nothing,
+        # so a multi-selection is never queued by a stray tap.
+        space = QShortcut(QKeySequence(Qt.Key.Key_Space), self.grid)
+        space.setContext(Qt.ShortcutContext.WidgetShortcut)
+        space.activated.connect(self._on_space)
         layout.addWidget(self.grid, stretch=1)
+
+    def _on_space(self):
+        if len(self.selected_paths()) == 1:
+            self.queue_requested.emit()
 
     # ------------------------------------------------------------------ #
 
@@ -602,8 +586,8 @@ class MediaBrowser(QWidget):
         return [Path(it.data(Qt.ItemDataRole.UserRole)) for it in items]
 
     def _browse(self):
-        start = self._folder if self._folder and Path(self._folder).is_dir() else str(Path.home())
-        folder = QFileDialog.getExistingDirectory(self, f"Select {self.kind} folder", start)
+        folder = QFileDialog.getExistingDirectory(self, f"Select {self.kind} folder",
+                                                  browse_start(self._folder))
         if not folder:
             return
         if Path(folder).name.lower() == "thumbnails":
@@ -624,8 +608,6 @@ class MediaBrowser(QWidget):
     def _on_selection(self):
         self._del_btn.setEnabled(bool(self.grid.selectedItems()))
         paths = self.selected_paths()
-        for btn in self._extend_btns:
-            btn.setEnabled(bool(paths))
         self.selection_changed.emit(paths[0] if paths else None)
         self.selection_paths_changed.emit(paths)
         self._update_status()
@@ -638,11 +620,6 @@ class MediaBrowser(QWidget):
             self.grid.setCurrentItem(item)
         menu = QMenu(self.grid)
         menu.addAction("Open containing folder", self._open_folder)
-        if self._extend_btns:
-            menu.addSeparator()
-            menu.addAction("📚 Send to Library", lambda: self._emit_selected(self.send_to_library_requested))
-            menu.addAction("Hide", lambda: self._emit_selected(self.hide_requested))
-            menu.addAction("Unhide", lambda: self._emit_selected(self.unhide_requested))
         menu.addSeparator()
         n = len(self.grid.selectedItems())
         menu.addAction(f"Delete {n} file{'s' if n != 1 else ''} (Recycle Bin)", self.delete_selected)
@@ -724,7 +701,7 @@ class MediaBrowser(QWidget):
             self._loader = ImageLoaderThread(folder, sort_option)
         else:
             self._loader = VideoLoaderThread(folder, self._ffmpeg_getter(), sort_option,
-                                             last_frame=self._last_frame, recursive=self._recursive)
+                                             recursive=self._recursive)
         self._loader.item_ready.connect(self._add_item)
         self._loader.progress.connect(lambda c, t: self._status.setText(f"Loading {c}/{t}…"))
         self._loader.finished_loading.connect(lambda n: self._on_loaded(n, previous))
@@ -732,8 +709,6 @@ class MediaBrowser(QWidget):
 
     def _on_loaded(self, n: int, previous: str | None):
         self._loading = False
-        if self._clips_chk is not None:
-            self._apply_processed_filter()      # the clip check needs the whole listing
         self._update_status()
         if previous:
             self.grid.select_key(previous)
@@ -749,36 +724,39 @@ class MediaBrowser(QWidget):
 
     def _add_item(self, img, key: str, label: str):
         self.grid.add_item(img, key, label)
-        self._mark_processed(self.grid.item(self.grid.count() - 1))
+        item = self.grid.item(self.grid.count() - 1)
+        self._mark_processed(item)
+        self._badge_item(item)
+
+    def set_queue_badges(self, badges: dict):
+        """{normalised source path: (text, running)} — tags every tile whose file is
+        running or waiting in the queue; tiles not in the map lose their tag."""
+        self._badges = badges
+        for i in range(self.grid.count()):
+            self._badge_item(self.grid.item(i))
+
+    def _badge_item(self, item):
+        text, running = getattr(self, "_badges", {}).get(
+            os.path.normcase(os.path.normpath(item.data(Qt.ItemDataRole.UserRole))), ("", False))
+        self.grid.set_badge(item, text, running)
 
     def _mark_processed(self, item):
         """Hide a tile that already has a finished video, unless Show all is on."""
         key = item.data(Qt.ItemDataRole.UserRole)
-        done = Path(key).name.lower() in self._processed
+        name = Path(key).name.lower()
+        done = name in self._processed
+        if not done and Path(key).suffix.lower() in IMAGE_EXTS:
+            done = stem_token(name) in self._processed     # a video named after it is in the folder
         item.setData(PROCESSED_ROLE, done)
-        clip = bool(self._clips_chk is not None and self._clips_chk.isChecked() and key in self._superseded)
-        item.setData(CLIP_ROLE, clip)
-        hide = (done and not self._show_all.isChecked()) or clip
+        hide = done and not self._show_all.isChecked()
         if hide and item.isSelected():
             item.setSelected(False)
         item.setHidden(hide)
 
     def _apply_processed_filter(self):
-        if self._clips_chk is not None and not self._loading:
-            self._superseded = superseded_clips(
-                [self.grid.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.grid.count())])
         for i in range(self.grid.count()):
             self._mark_processed(self.grid.item(i))
         self._on_selection()
-
-    def _emit_selected(self, signal):
-        paths = self.selected_paths()
-        if paths:
-            signal.emit(paths)
-
-    def _on_hide_clips(self, on: bool):
-        self.hide_clips_changed.emit(bool(on))
-        self._apply_processed_filter()
 
     def refresh_processed(self):
         """A run just finished: recompute what has a result and re-hide,
@@ -794,14 +772,11 @@ class MediaBrowser(QWidget):
             return
         noun = "image" if self.kind == "image" else "video"
         items = [self.grid.item(i) for i in range(self.grid.count())]
-        clips = sum(1 for it in items if it.data(CLIP_ROLE))
-        hidden = sum(1 for it in items if it.data(PROCESSED_ROLE) and it.isHidden() and not it.data(CLIP_ROLE))
-        shown = len(items) - hidden - clips
+        hidden = sum(1 for it in items if it.data(PROCESSED_ROLE) and it.isHidden())
+        shown = len(items) - hidden
         text = f"{shown} {noun}{'s' if shown != 1 else ''}"
         if hidden:
             text += f" · {hidden} done hidden"
-        if clips:
-            text += f" · {clips} short clip{'s' if clips != 1 else ''} hidden"
         selected = len(self.selected_paths())
         if selected:
             text += f" · {selected} selected"

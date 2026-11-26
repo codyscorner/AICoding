@@ -9,6 +9,7 @@ Windows does.
 """
 
 import json
+import re
 from pathlib import Path
 
 from workflow_folders import history_file, library_dir_for, video_names
@@ -57,9 +58,34 @@ def processed_sources(workflow_dir: str, library_root: str, workflow_rel: str) -
     if not (wf_dir and root and (workflow_rel or "").strip()):
         return set()
     hist = history_file(wf_dir, workflow_rel)
-    if not hist.is_file():
-        return set()
     present = video_names(library_dir_for(root, workflow_rel)) | video_names(root)
     if not present:
         return set()
-    return {source for result, source in _result_sources(hist).items() if result in present}
+    done = ({source for result, source in _result_sources(hist).items() if result in present}
+            if hist.is_file() else set())
+    return done | _stem_tokens(present, workflow_rel)
+
+
+STEM_PREFIX = "stem:"
+
+
+def stem_token(source_name: str) -> str:
+    """The marker a source image's name leaves in its videos' file names."""
+    from run_worker import _safe          # lazy: run_worker pulls in Qt
+    return STEM_PREFIX + _safe(Path(source_name).stem).lower()
+
+
+def _stem_tokens(present: set[str], workflow_rel: str) -> set[str]:
+    """The Library folder itself is the record: a video is named
+    ``<source stem>_<workflow>_<yyyymmdd_hhmmss>.<ext>``, so every file that
+    follows that pattern marks its source stem as done — whether or not a
+    history entry was ever written for the run."""
+    from run_worker import _safe
+    wf = _safe(Path(workflow_rel).stem).lower()
+    pattern = re.compile(rf"^(?P<base>.+)_{re.escape(wf)}_\d{{8}}_\d{{6}}\.[^.]+$")
+    tokens = set()
+    for name in present:
+        m = pattern.match(name)
+        if m:
+            tokens.add(STEM_PREFIX + m.group("base"))
+    return tokens

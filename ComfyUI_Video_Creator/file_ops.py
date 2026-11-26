@@ -109,9 +109,29 @@ def archive_paths(paths: list[Path], archive_dir: Path) -> tuple[list[Path], lis
     return moved, errors
 
 
+def browse_start(folder: str) -> str:
+    """Folder a Browse dialog should open in for `folder`.
+
+    A path that does not exist yet (a workflow with no runs) is created first;
+    if that fails (drive gone, no permission) walk up to the nearest folder
+    that does exist. Home only when nothing on the path is reachable."""
+    if folder:
+        p = Path(folder)
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        while not p.is_dir() and p.parent != p:
+            p = p.parent
+        if p.is_dir():
+            return str(p)
+    return str(Path.home())
+
+
 def thumbnail_caches(path: Path, root: Path | None = None) -> list[Path]:
-    """Cached thumbnails belonging to `path`: `<stem>.jpg` / `<stem>_last.jpg`
-    for videos, `<stem>_<crc of the path relative to root>.jpg` for images."""
+    """Cached thumbnails belonging to `path`: `<stem>.jpg` for videos (plus the
+    `<stem>_last.jpg` that v2.x cached), `<stem>_<crc of the path relative to
+    root>.jpg` for images."""
     out: list[Path] = []
     folders = {path.parent / "thumbnails"}
     if root:

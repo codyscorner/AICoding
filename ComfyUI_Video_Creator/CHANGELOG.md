@@ -3,6 +3,64 @@
 ### Unreleased
 - **Icon-only buttons now have a short text label.** Buttons that showed only a symbol (↻, …, 🎲, 🗑 and so on) now read e.g. "↻ Refresh" or "Browse" in regular-weight, regular-size text; their fixed widths were dropped so they size to their label. Covers: ↻ Refresh, 🎲 Random, Browse, 📂 Open, 🗑 Delete, and the video player's ⏸ Pause / ▶ Play, ■ Stop, ⛶ Full screen, ⏮ Prev, ⏭ Next.
 
+### v2.22.0
+- **Removed the Video → Extend tab.** The app now makes single videos only (Image → Video and Text → Video, plus the Library); extending is the ComfyUI Chain Automator's job. Gone with the tab: the video picker and **Videos** folder setting, the *Video input* mode and *Append the new clip* options, ffmpeg stitching, source-size and codec matching, `_EXT` / `_extended` output names, **Send to Library** / **Hide** / **Unhide** / **Hide short clips** (`extend_marks.py`), and the Library's **Send to Extend** button
+- Existing history and favorites keep working: entries saved by earlier versions still match the same run made now, so no duplicate rows and no lost stars. Videos you made by extending stay in the Library with their prompt and settings; **Reuse Settings** on one of them explains that extending was removed
+- Your workflows, videos and settings files are not changed. Leftover extend settings in the config and `extend_hidden.json` are simply ignored
+- **The EXE is now a one-folder build** (`ComfyUI_Video_Creator.exe` + `_internal\`) so it starts faster. Same folder and file name, so existing shortcuts still work. `build_exe.py` now keeps the previous EXE and `_internal` as timestamped `.bak` names on every deploy, and asks you to close the app if it is running
+
+### v2.21.5
+- **Arrow keys skip 2 seconds in the built-in video player.** **→** jumps 2 s forward, **←** jumps 2 s back (clamped to the start/end of the clip), also while the video is full-screen. These keys used to switch to the previous/next clip in a playlist; that moved to **Page Up / Page Down** (the ⏮ ⏭ buttons are unchanged)
+
+### v2.21.4
+- **Instant feedback after clicking Run / Extend.** On RunPod the app first compares the workflow's model files with the pod, which can take a minute or two — during that time the old yellow **DONE** bar stayed on screen and the app looked frozen. Now, as soon as you click, the bar switches to the animated busy state with "Preparing — checking models on the pod before starting…" and the same line is written to the log (once per batch, so a multi-select doesn't repeat it). Skipped when a run is already in progress, so a running job's bar is never disturbed
+
+### v2.21.3
+- **Queued sources are tagged on the thumbnails.** On Image → Video (and Video → Extend) every picture that is running or waiting in the queue now carries a badge in its top-left corner: a green **▶ RUNNING** for the active run and amber **#1, #2, #3…** for the waiting ones, in queue order. The badges follow the queue as it changes (a run finishes, you reorder, remove or clear in the Queue window), and a source queued twice shows both positions
+
+### v2.21.2
+- **The seed a video was actually made with is now saved.** A run on *Random* used to be recorded as just "Seed: random" — the real number only appeared in the run log. Each finished run now writes the seed it used into the workflow's `.prompt_history.json`, per result file (new `seeds` map, next to `sources`). The Library details show it (`Seed: 123456789 (random — this is the one this file got)`), the Prompt History dialog lists it beside each result file, and typing a seed number into the history filter finds the run. To compare other videos on the same seed, set Seed to *Fixed* and enter that number
+  - The history row itself still says "Seed random" for a random run, so several runs of one prompt keep sharing one row
+  - Random seeds are now drawn from 0 – 2,147,483,647 (was 0 – 4,294,967,295): the Seed box cannot hold anything larger, so about half of all random seeds could not have been re-entered
+  - Videos made before this version have no recorded seed and still show "Seed: random"
+
+### v2.21.1
+- **Any key or click stops the alert sound.** The sound is there to call you in from another room; once you are at the desk it has done its job. While an alert is playing, pressing any key or clicking anywhere in the app silences it immediately (the key or click still does what it normally does — Space on a thumbnail still queues the run). Qt only sees input while the app has focus, so from another program the first click on the Video Creator window is what stops it
+
+### v2.21.0
+- **🧹 Clean up pod folders… (Settings → Models).** One button empties the two folders this app owns on the pod's network volume: `<Output prefix>VideoCreator/` (results — including the first-frame `.png` and `-audio.mp4` intermediates that *Delete results after download* never sees, because the app never downloads them) and `<Input prefix>VideoCreator/` (every source image / video uploaded for a run). It scans first, shows a per-folder count and size, and deletes only after you press **Delete**; a Cancel button stops after the file in flight. Other apps' folders in the bucket (`Merge/`, `image/`, …) and everything on this PC are never touched
+  - Refuses to start while a run or model transfer is in progress (the pod is still reading the input folder)
+  - Deletes one object per request (RunPod rejects bulk deletes) on a background thread with live progress, then removes the now-empty run folders deepest-first; the result is also written to every tab's log
+  - New `s3_input_prefix` setting (default `runpod-slim/ComfyUI/input/`); the S3 client code shared with the per-run delete moved into `remote_cleanup.make_client()`
+
+### v2.20.0
+- **Space queues the selected thumbnail.** On the Image → Video and Video → Extend tabs, with exactly one thumbnail selected and the grid focused, Space does what the Create / Extend button does — so you can click or arrow from image to image and tap Space on each. With several selected, Space does nothing (use the button for multi-select); it also does nothing when the button would be disabled
+
+### v2.19.1
+- **🎬 Scenes… button moved onto the History / Reload / Save to workflow row** instead of a line of its own. The Scenes strip (◀ scene ▶, options, preview) now appears only when the prompt actually contains a `{{tag}}`, so a prompt without markers looks exactly as before
+
+### v2.19.0
+- **Scenes: swap one section of a prompt without leaving the app.** Replaces the round trip through Document Update Placeholder (pick snippet → copy → switch app → Paste from Clipboard → Create). Put `{{tag}}` markers in the prompt (e.g. `…in a {{bedroom}}, lit by {{lights}}…`); each tag has a list of scene snippets, and the one that is *current* is what the marker becomes in the run, in the queue view and in history. The rest of the prompt is untouched
+  - **Scenes strip** under the prompt (Image, Video and Text tabs): one row per tag found in the prompt — ◀ / dropdown / ▶ with `n / total (k used)` — plus a one-line *Sends:* preview of the finished prompt. A tag with no scenes shows red with **＋ Add scenes…**
+  - **Next scene after Create** (on by default): once a run is queued the current scene is marked used (✓) and every tag moves to its next unused scene, so the loop is: select the images for this scene → Create → select the next group → Create. **In order** or **Shuffle (no repeats)**; when every scene has been used it says so and stays put until **↺ Reset used**. Nothing advances if the repeat guard declined the run
+  - **Create refuses to send a literal `{{tag}}`**: a marker with no scene stops the run with a message naming it
+  - **🎬 Scenes…** manager: add/delete tags and snippets, optional name per snippet (list label only, never sent), **Import from Paste** (splits a numbered AI reply into named snippets), **Import Placeholder data.json** (merges tags and snippets, skips ones already present), reset used marks
+  - One library for all tabs, saved on every change to `scenes.json` next to the config. New modules `scenes.py` (no Qt) and `scene_renderer.py` (copied from Document Update Placeholder's `renderer.py`); 11 tests in `test_scenes.py`
+  - 💾 Save to workflow writes the finished text (the scene already filled in), not the marker, so the workflow file stays valid for other tools
+
+### v2.18.2
+- **Fix: images that already had a video stayed in the Image → Video picker.** "Finished" was decided only by the workflow's prompt-history file, and runs started from the Library's Reuse Settings were never written to it. The picker now reads the Library folder itself: a video named `<image name>_<workflow>_<stamp>.mp4` in the workflow's folder hides that image (Show all brings it back; deleting the video puts the image back). History still counts as a backup
+- Runs started from Reuse Settings now record their result on the entry they were reused from (no new history row)
+
+### v2.18.1
+- **Alert sound plays inside the app.** MP3/OGG/FLAC/M4A alert sounds used to open your default media player window; they now play in-process through Qt Multimedia (the same engine as the built-in video player), so nothing external is launched
+
+### v2.18.0
+- **📋 Paste from Clipboard button on the prompt box.** Next to ⤢ Expand on every positive prompt (Image, Video and Text tabs): one click replaces the whole prompt with the text on the clipboard, so there is no more click-in / select-all / paste. If the clipboard has no text it tells you and leaves the prompt as it was. The negative prompt (one-line row) does not get the button
+
+### v2.17.2
+- **Fix: the Library folder's Browse button (…) opened your user folder instead of the Library folder.** With a workflow that has no runs yet, the Library points at that workflow's own folder, which did not exist yet, so the dialog gave up and started in your home folder. Browse now creates that folder first and opens in it; if it cannot be created (drive missing, no permission) it goes up the path to the nearest folder that does exist, and only uses the home folder when nothing on the path is reachable. The Image / Extend pickers' Browse and the folder pickers in Settings work the same way
+
 ### v2.17.1
 - **Fix: the model upload/download progress was wrong for any file over 2 GB.** The progress signal carried the byte counts through a 32-bit integer, so an 18.03 GB upload showed "-1911 MB of 855 MB" and a bar stuck near 99%. The counts now arrive intact: real sizes ("9.02 GB of 18.03 GB"), a bar that matches, and a sensible MB/s and time left. The transfer itself was never affected - only the dialog
 
